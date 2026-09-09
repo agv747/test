@@ -24,6 +24,37 @@ npm run deploy  # publish to Cloudflare Workers
 
 No build step. The app is plain ES modules served as static assets by a Cloudflare Worker.
 
+### Deploying
+
+The app deploys as a single Cloudflare Worker serving `public/` as static assets. Validate
+the bundle at any time without credentials:
+
+```bash
+npx wrangler deploy --dry-run
+```
+
+To publish you need Cloudflare credentials. Either authenticate interactively:
+
+```bash
+npx wrangler login    # opens a browser
+npm run deploy
+```
+
+…or supply an API token via environment variables (for CI or a headless environment):
+
+```bash
+export CLOUDFLARE_API_TOKEN=...     # "Edit Cloudflare Workers" template
+export CLOUDFLARE_ACCOUNT_ID=...    # Cloudflare dashboard → Workers & Pages → Account ID
+npm run deploy
+```
+
+The token needs **Account → Workers Scripts → Edit**. The published URL is
+`retail-price-intelligence-sg.<your-subdomain>.workers.dev`; rename the Worker by changing
+`name` in `wrangler.toml`.
+
+Nothing in the app is server-side — state lives in the visitor's browser — so a deploy is
+just an asset upload and is safe to repeat.
+
 ### Trying the demo
 
 1. Open the app — you start as **Wei Ling Tan (Trade Marketer)**.
