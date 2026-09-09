@@ -1,0 +1,8 @@
+name = "tic-tac-toe"
+compatibility_date = "2024-09-23"
+main = "worker.js"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "404-page"

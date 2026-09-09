@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Крестики-нолики</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>Крестики-нолики</h1>
+
+    <div class="controls">
+      <label class="mode-toggle">
+        <input type="checkbox" id="vsAi" />
+        Играть против компьютера
+      </label>
+      <button id="resetBtn" class="btn">Новая игра</button>
+    </div>
+
+    <p id="status" class="status" aria-live="polite">Ход: X</p>
+
+    <div id="board" class="board" role="grid" aria-label="Игровое поле"></div>
+
+    <div class="score">
+      <div class="score-item"><span class="score-label">X</span><span id="scoreX">0</span></div>
+      <div class="score-item"><span class="score-label">Ничьи</span><span id="scoreD">0</span></div>
+      <div class="score-item"><span class="score-label">O</span><span id="scoreO">0</span></div>
+    </div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
