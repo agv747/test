@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildPrompt,
   extractJson,
+  inferBoxes,
   matchSku,
   normalise,
+  parseBox,
   parseModelResponse,
   parsePrice,
 } from '../shared/recognition.js';
@@ -203,6 +205,101 @@ test('a licence-gated model carries the terms it needs shown before acceptance',
     assert.match(model.licence.terms, /^https:\/\//, `${model.id} links its terms`);
     assert.match(model.licence.policy, /^https:\/\//, `${model.id} links its use policy`);
   }
+});
+
+/* ------------------------------------------------- where a detection sits on the photo */
+
+test('a box arrives as corner coordinates or as x/y/w/h', () => {
+  assert.deepEqual(parseBox([0.1, 0.2, 0.6, 0.3]), { x: 0.1, y: 0.2, w: 0.5, h: 0.1, source: 'model' });
+  assert.deepEqual(parseBox({ x: 0.1, y: 0.2, w: 0.5, h: 0.1 }), { x: 0.1, y: 0.2, w: 0.5, h: 0.1, source: 'model' });
+  assert.deepEqual(parseBox({ x: 0.1, y: 0.2, width: 0.5, height: 0.1 }).w, 0.5);
+});
+
+test('models that report on a 0-1000 grid are rescaled, not discarded', () => {
+  assert.deepEqual(parseBox([100, 200, 600, 300]), { x: 0.1, y: 0.2, w: 0.5, h: 0.1, source: 'model' });
+});
+
+test('a percentage-scaled box is rescaled too', () => {
+  assert.deepEqual(parseBox([10, 20, 60, 30]), { x: 0.1, y: 0.2, w: 0.5, h: 0.1, source: 'model' });
+});
+
+test('reversed corners are normalised rather than producing a negative box', () => {
+  assert.deepEqual(parseBox([0.6, 0.3, 0.1, 0.2]), { x: 0.1, y: 0.2, w: 0.5, h: 0.1, source: 'model' });
+});
+
+test('a box that describes no usable area is dropped', () => {
+  // A rectangle over the wrong line invites a TME to confirm a price they never checked.
+  assert.equal(parseBox([0.5, 0.5, 0.5, 0.5]), null);
+  assert.equal(parseBox([0.5, 0.5, 0.505, 0.9]), null, 'too narrow to be a price line');
+  assert.equal(parseBox('somewhere near the top'), null);
+  assert.equal(parseBox([1, 2, 3]), null);
+  assert.equal(parseBox(null), null);
+  assert.equal(parseBox({ x: 0.1, y: 0.2 }), null);
+});
+
+test('a box is clamped to the image', () => {
+  const box = parseBox([-0.4, 0.5, 1.4, 0.9]);
+  assert.equal(box.x, 0);
+  assert.equal(box.w, 1);
+});
+
+test('detections with no reported position are laid out in reading order', () => {
+  const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+  const placed = inferBoxes(rows);
+
+  assert.equal(placed.length, 4);
+  assert.ok(placed.every((r) => r.bounding_box.source === 'inferred'));
+  // Bands descend the image in order, and none overlaps the next.
+  for (let i = 1; i < placed.length; i += 1) {
+    const previous = placed[i - 1].bounding_box;
+    assert.ok(placed[i].bounding_box.y >= previous.y + previous.h, `band ${i} clears band ${i - 1}`);
+  }
+  const last = placed.at(-1).bounding_box;
+  assert.ok(last.y + last.h <= 1, 'the last band stays inside the image');
+});
+
+test('reported positions are never mixed with inferred ones', () => {
+  // Half-measured, half-invented geometry in one picture cannot be labelled honestly.
+  const rows = [{ bounding_box: { x: 0, y: 0, w: 1, h: 0.1, source: 'model' } }, { bounding_box: null }];
+  const placed = inferBoxes(rows);
+  assert.equal(placed[1].bounding_box, null);
+});
+
+test('inferring over an empty response yields an empty response', () => {
+  assert.deepEqual(inferBoxes([]), []);
+});
+
+test('a model that reports boxes has them carried through to the detections', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 13.6, confidence: 0.95, box: [0.05, 0.2, 0.95, 0.27] },
+      { product: 'Marlboro Red', price: 16, confidence: 0.93, box: [0.05, 0.3, 0.95, 0.37] },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.equal(detections[0].bounding_box.source, 'model');
+  assert.equal(detections[0].bounding_box.y, 0.2);
+  assert.equal(detections[1].bounding_box.y, 0.3);
+});
+
+test('a model that reports no boxes still yields a drawable, honestly labelled layout', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 13.6 },
+      { product: 'Marlboro Red', price: 16 },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.ok(detections.every((d) => d.bounding_box));
+  assert.ok(detections.every((d) => d.bounding_box.source === 'inferred'));
+});
+
+test('the prompt asks for a position only when the model can genuinely supply one', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /"box"/);
+  assert.match(prompt, /OPTIONAL/);
+  assert.match(prompt, /Omit it/);
+  assert.match(prompt, /top to bottom/);
 });
 
 test('the recommended free model has no licence click-through', async () => {
