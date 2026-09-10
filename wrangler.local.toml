@@ -1,0 +1,24 @@
+# Offline development configuration.
+#
+# Identical to wrangler.toml except that the `[ai]` binding is absent. Workers AI has no
+# local emulation — binding it makes `wrangler dev` open a remote proxy session, which needs
+# Cloudflare credentials and network access. With this file the Worker, its static assets
+# and a local D1 all run offline; /api/recognise returns 503 and the MVP Simulator is used.
+#
+#   npm run dev:local
+#
+# Keep the bindings below in step with wrangler.toml.
+
+name = "price-check"
+compatibility_date = "2024-09-23"
+main = "worker.js"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "retail-price-intelligence"
+database_id = "9fabe7e1-fb10-455b-adf8-15bcb16a8f5d"

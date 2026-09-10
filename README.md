@@ -241,6 +241,54 @@ observations over 12 weeks — engineered to show:
 
 ---
 
+## Recognition models
+
+**Admin → Recognition provider** picks the model. The choice is stored in configuration and
+survives a reload.
+
+| Model | Reads the image? | Needs |
+|---|---|---|
+| MVP Simulator | **No** | nothing |
+| `@cf/qwen/qwen3.8-27b` | Yes | `[ai]` binding |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | `[ai]` binding |
+| `@cf/meta/llama-3.2-11b-vision-instruct` | Yes | `[ai]` binding |
+| `openai/gpt-4.1-mini` | Yes | `[ai]` binding + AI Gateway with Unified Billing |
+
+The **simulator does not look at the photograph.** It generates plausible detections from the
+SKU catalogue and the effective price rules, seeded from the image file identity so the same
+photo always gives the same answer. It exists for demos and offline work; the prices it
+reports are invented. The Admin screen and the active-model card both say so, because a
+simulator that looks like recognition is the most expensive kind of misunderstanding here.
+
+Real models run **server-side** through the Worker's `AI` binding (`POST /api/recognise`), so
+no credential ever reaches a device a TME carries into a shop. The browser downscales the
+photo to 1600px before upload — a phone image is far larger than a model needs to read a
+price list, and the round trip is what the TME waits on.
+
+A model answers in free text, so `shared/recognition.js` extracts the JSON, matches what was
+read back to catalogue SKUs (requiring the brand token, so "Winston Red" never matches
+"Marlboro Red" on the shared word) and normalises prices. A line it cannot match is still
+shown to the TME with its price and flagged low confidence — a silently discarded price is
+worse than one that needs confirming. That module is pure and unit-tested; the live model
+call is not something tests can cover.
+
+Recognition failures are reported as failures. The app does not fall back to the simulator,
+because putting invented prices in front of a TME under the banner of a real model is worse
+than an error.
+
+### Local development with the AI binding
+
+Workers AI has no local emulation: binding it makes `wrangler dev` open a remote proxy
+session that needs Cloudflare credentials. Two configurations exist for this reason:
+
+```bash
+npm run dev          # wrangler.toml       — assets + D1 + AI, needs `wrangler login`
+npm run dev:local    # wrangler.local.toml — assets + local D1, fully offline
+```
+
+Under `dev:local`, `/api/recognise` returns 503 and the simulator is used. Keep the bindings
+in the two files in step.
+
 ## Replacing the recognition simulator
 
 ```js

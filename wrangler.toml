@@ -10,6 +10,15 @@ directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+# NOTE: binding AI makes `wrangler dev` open a remote proxy session, which needs Cloudflare
+# credentials. For offline work use `npm run dev:local`, which loads wrangler.local.toml.
+#
+# Vision models for price recognition. The model runs server-side through this binding, so
+# no credential is ever shipped to a device a TME carries into a shop. Without it,
+# /api/recognise returns 503 and only the MVP Simulator is usable.
+[ai]
+binding = "AI"
+
 # Shared observation store. Without this binding the API returns 503 and the client falls
 # back to its bundled seed data, so the app still runs on a plain static host.
 [[d1_databases]]

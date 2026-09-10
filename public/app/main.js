@@ -9,6 +9,8 @@
 import * as store from './store.js';
 import { registerProvider, setActiveProvider } from './services/recognition/provider.js';
 import { mockRecognitionProvider } from './services/recognition/mockProvider.js';
+import { registerRemoteProviders } from './services/recognition/remoteProvider.js';
+import { RECOGNITION_MODELS, DEFAULT_RECOGNITION_MODEL } from './config.js';
 import { buildAnalytics } from './services/analyticsService.js';
 import { esc } from './lib/format.js';
 
@@ -29,8 +31,11 @@ import * as competitorMapping from './ui/competitorMapping.js';
 import * as imageReview from './ui/imageReview.js';
 import * as admin from './ui/admin.js';
 
+// Every configured model becomes a provider; the simulator stays the default so a fresh
+// install never spends money without someone choosing to.
 registerProvider(mockRecognitionProvider);
-setActiveProvider(mockRecognitionProvider.id);
+registerRemoteProviders(RECOGNITION_MODELS);
+setActiveProvider(DEFAULT_RECOGNITION_MODEL);
 
 const ROUTES = {
   'field/home': fieldHome,
@@ -327,6 +332,14 @@ export async function start() {
   // The dataset is loaded once, before the first render, so every page and service can keep
   // reading it synchronously.
   await store.init();
+
+  // The chosen model lives in configuration, so it survives a reload.
+  const chosen = store.getConfig().recognition_model ?? DEFAULT_RECOGNITION_MODEL;
+  try {
+    setActiveProvider(chosen);
+  } catch {
+    setActiveProvider(DEFAULT_RECOGNITION_MODEL);
+  }
 
   delegate(root);
   window.addEventListener('hashchange', render);

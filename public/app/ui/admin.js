@@ -265,19 +265,53 @@ function thresholdsTab(ctx) {
 function recognitionTab(ctx) {
   const providers = listProviders();
   const active = getActiveProvider();
+  const corrections = ctx.data.price_observations.filter((o) => o.manual_correction).length;
+  const total = Math.max(1, ctx.data.price_observations.length);
+
+  const card = (p) => {
+    const selected = p.id === active.id;
+    const simulated = p.reads_image === false;
+    return `<div class="detection detection--${selected ? 'good' : 'none'}" style="cursor:pointer"
+        data-action="pick-model" data-model="${esc(p.id)}">
+      <div class="detection__head">
+        <div class="detection__body">
+          <div class="detection__name">${esc(p.label)}
+            ${selected ? '<span class="pill pill--good">✓ Active</span>' : ''}
+            ${simulated
+              ? '<span class="pill pill--watch">! Does not read the image</span>'
+              : '<span class="pill pill--info">Reads the image</span>'}
+          </div>
+          <div class="detection__meta mono xsmall">${esc(p.id)}</div>
+          <div class="detection__meta">${esc(p.description ?? '')}</div>
+          <div class="detection__meta"><strong>Cost:</strong> ${esc(p.cost ?? '—')}</div>
+        </div>
+      </div>
+    </div>`;
+  };
+
   return `<div class="card">
-    <div class="card__head"><h2>Image recognition provider (§27)</h2></div>
-    ${disclaimer('Recognition is an <strong>input mechanism</strong>; Price Intelligence is the product. The provider is behind an interface — swapping the MVP simulator for Trax, a Vision API or a multimodal model requires no UI change.')}
-    <div class="filters">
-      ${selectField({
-        label: 'Active provider',
-        name: 'provider',
-        value: active.id,
-        includeAll: false,
-        options: providers.map((p) => ({ value: p.id, label: `${p.label} (${p.kind})` })),
-      })}
+    <div class="card__head"><h2>How recognition works</h2></div>
+    ${disclaimer(
+      'Recognition is an <strong>input mechanism</strong>; Price Intelligence is the product. Every model below returns the same detection shape, so switching one for another changes no other part of the app.',
+    )}
+
+    <div class="decision decision--${active.reads_image === false ? 'watch' : 'good'}">
+      <div class="decision__label">Active model</div>
+      <div class="decision__value">${esc(active.label)}</div>
+      <div class="decision__note">${
+        active.reads_image === false
+          ? '<strong>This model does not look at the photograph.</strong> It generates plausible detections from the SKU catalogue and the effective price rules, seeded from the image file identity so the same photo always gives the same answer. Useful for demos and offline work; the prices it reports are invented.'
+          : 'Runs server-side through the Worker\u2019s AI binding. The image is downscaled in the browser, sent to the Worker, and the model reads the price list. No credential reaches the device.'
+      }</div>
     </div>
-    <h3 class="mt">Interface contract</h3>
+
+    <h3 class="mt">Available models</h3>
+    ${providers.map(card).join('')}
+    <p class="xsmall muted">Cloudflare-hosted models need only the <span class="mono">[ai]</span> binding. Models routed through AI Gateway additionally need a gateway with Unified Billing, where Cloudflare holds the provider credentials — no API key is stored in this application.</p>
+  </div>
+
+  <div class="card">
+    <div class="card__head"><h2>Provider interface (§27)</h2></div>
     <pre class="small mono" style="background:var(--surface-2);padding:12px;border-radius:var(--radius-sm);overflow-x:auto">analyzePriceImage(image, context) -&gt; detections[]
 
 detection = {
@@ -285,11 +319,11 @@ detection = {
   price_candidate, confidence,
   bounding_box?, alternatives?
 }</pre>
-    <p class="small">Every detection is stored with both the <strong>original detected value</strong> and the <strong>confirmed value</strong>, plus a manual-correction flag — so corrections are available later as labelled training examples.</p>
+    <p class="small">A real model returns free text, so the Worker matches what it read back to catalogue SKUs by brand and variant tokens. A line it cannot match is still shown to the TME with its price, flagged low confidence, rather than being dropped.</p>
+    <p class="small">Every detection is stored with both the <strong>original detected value</strong> and the <strong>confirmed value</strong>, plus a manual-correction flag — so corrections accumulate as labelled examples for evaluating or fine-tuning a model later.</p>
     <p class="small">Manual corrections recorded so far:
-      <strong>${ctx.data.price_observations.filter((o) => o.manual_correction).length}</strong>
-      of ${ctx.data.price_observations.length} observations
-      (${pct((ctx.data.price_observations.filter((o) => o.manual_correction).length / Math.max(1, ctx.data.price_observations.length)) * 100)}).</p>
+      <strong>${corrections}</strong> of ${ctx.data.price_observations.length} observations
+      (${pct((corrections / total) * 100)}).</p>
   </div>`;
 }
 
@@ -330,6 +364,17 @@ export function onAction(action, el, ctx) {
       dbMessage = null;
       ctx.render();
       break;
+    case 'pick-model': {
+      const id = el.dataset.model;
+      try {
+        setActiveProvider(id);
+        ctx.store.updateConfig({ recognition_model: id });
+      } catch (err) {
+        console.error(err);
+      }
+      ctx.render();
+      break;
+    }
     case 'refresh-health':
       dbHealth = null;
       dbMessage = null;
@@ -499,11 +544,6 @@ export function onChange(target, ctx) {
   }
   if (d.filter === 'sku-active') {
     ctx.store.updateSku(d.sku, { active: target.checked });
-    ctx.render();
-    return true;
-  }
-  if (d.filter === 'provider') {
-    setActiveProvider(target.value);
     ctx.render();
     return true;
   }
