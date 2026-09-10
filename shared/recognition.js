@@ -34,6 +34,49 @@ Respond with JSON only, no commentary, in exactly this shape:
 {"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60"}]}`;
 }
 
+/* -------------------------------------------------------------- model input */
+
+/** Decodes base64 into a byte array, for models that take raw image bytes. */
+export function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Builds the request body for one model.
+ *
+ * Workers AI vision models do not share an input shape: some take `{prompt, image}` with a
+ * data URL, LLaVA takes raw image bytes, and the chat-style models take multimodal
+ * `messages`. The shape is declared per model rather than guessed from the id, so adding a
+ * model is a data change.
+ *
+ * @param {'image_url'|'image_bytes'|'messages'} shape
+ */
+export function buildModelInput(shape, prompt, base64, maxTokens = 1500) {
+  const dataUrl = `data:image/jpeg;base64,${base64}`;
+
+  if (shape === 'image_bytes') {
+    return { prompt, image: base64ToBytes(base64), max_tokens: maxTokens };
+  }
+  if (shape === 'image_url') {
+    return { prompt, image: dataUrl, max_tokens: maxTokens };
+  }
+  return {
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+    max_tokens: maxTokens,
+  };
+}
+
 /* ------------------------------------------------------------------ parsing */
 
 /**

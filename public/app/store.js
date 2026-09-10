@@ -239,6 +239,60 @@ export async function flush() {
 const upsert = (table, row) => ({ op: 'upsert', table, row });
 const remove = (table, id) => ({ op: 'delete', table, id });
 
+/** What the deployed Worker actually has bound, or null when there is no API. */
+export async function workerConfig() {
+  try {
+    const response = await fetch(`${API_BASE}/config`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs one recognition call against a known image and returns the full result, including
+ * the raw model response — so a failing model can be diagnosed from inside the app.
+ */
+export async function testRecognitionModel(model, sampleUrl, skus, currency = 'SGD') {
+  const started = Date.now();
+  const imageResponse = await fetch(sampleUrl);
+  if (!imageResponse.ok) throw new Error(`Could not load the test image (${imageResponse.status})`);
+  const blob = await imageResponse.blob();
+  const image = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the test image'));
+    reader.readAsDataURL(blob);
+  });
+
+  const response = await fetch(`${API_BASE}/recognise`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ image, model, skus, currency }),
+  });
+  const body = await response.json().catch(() => ({}));
+  return {
+    ok: response.ok,
+    status: response.status,
+    elapsed_ms: Date.now() - started,
+    image_bytes: blob.size,
+    ...body,
+  };
+}
+
+/** Accepts a model licence. Requires explicit confirmation; never called implicitly. */
+export async function acceptModelLicence(model) {
+  const response = await fetch(`${API_BASE}/model-licence`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model, confirmed: true }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? `API responded ${response.status}`);
+  return body;
+}
+
 /** Database reachability and row counts, or null when there is no API behind this build. */
 export async function databaseHealth() {
   try {

@@ -161,3 +161,53 @@ test('the detection count is capped so one bad response cannot flood a visit', (
   });
   assert.equal(detections.length, 40);
 });
+
+/* ------------------------------------------------------- model input shapes */
+
+test('image_url models receive a data URL', async () => {
+  const { buildModelInput } = await import('../shared/recognition.js');
+  const input = buildModelInput('image_url', 'read this', 'QUJD');
+  assert.equal(input.prompt, 'read this');
+  assert.match(input.image, /^data:image\/jpeg;base64,QUJD$/);
+});
+
+test('image_bytes models receive raw bytes, not a string', async () => {
+  const { buildModelInput, base64ToBytes } = await import('../shared/recognition.js');
+  const input = buildModelInput('image_bytes', 'read this', 'QUJD');
+  assert.ok(Array.isArray(input.image), 'LLaVA takes a byte array');
+  assert.deepEqual(input.image, [65, 66, 67], '"QUJD" decodes to ABC');
+  assert.deepEqual(base64ToBytes('QUJD'), [65, 66, 67]);
+});
+
+test('messages models receive multimodal content', async () => {
+  const { buildModelInput } = await import('../shared/recognition.js');
+  const input = buildModelInput('messages', 'read this', 'QUJD');
+  assert.equal(input.messages.length, 1);
+  const [text, image] = input.messages[0].content;
+  assert.equal(text.text, 'read this');
+  assert.match(image.image_url.url, /^data:image\/jpeg;base64,/);
+});
+
+test('every image-reading model declares an input shape the builder understands', async () => {
+  const { RECOGNITION_MODELS } = await import('../public/app/config.js');
+  const shapes = new Set(['image_url', 'image_bytes', 'messages']);
+  for (const model of RECOGNITION_MODELS.filter((m) => m.reads_image)) {
+    assert.ok(shapes.has(model.input), `${model.id} declares a known input shape`);
+  }
+});
+
+test('a licence-gated model carries the terms it needs shown before acceptance', async () => {
+  const { RECOGNITION_MODELS } = await import('../public/app/config.js');
+  for (const model of RECOGNITION_MODELS.filter((m) => m.licence)) {
+    assert.ok(model.licence.name, `${model.id} names its licence`);
+    assert.match(model.licence.terms, /^https:\/\//, `${model.id} links its terms`);
+    assert.match(model.licence.policy, /^https:\/\//, `${model.id} links its use policy`);
+  }
+});
+
+test('the recommended free model has no licence click-through', async () => {
+  const { RECOGNITION_MODELS, RECOMMENDED_FREE_MODEL } = await import('../public/app/config.js');
+  const model = RECOGNITION_MODELS.find((m) => m.id === RECOMMENDED_FREE_MODEL);
+  assert.equal(model.licence, undefined, 'the default suggestion works without a legal step');
+  assert.equal(model.tier, 'free');
+});

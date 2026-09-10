@@ -26,7 +26,8 @@ import {
   upsertSql,
 } from './shared/schema.js';
 import { buildSeedData } from './public/app/seed.js';
-import { buildPrompt, parseModelResponse } from './shared/recognition.js';
+import { buildModelInput, buildPrompt, parseModelResponse } from './shared/recognition.js';
+import { RECOGNITION_MODELS } from './public/app/config.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -49,9 +50,15 @@ export default {
 };
 
 async function handleApi(request, env, url) {
-  // Recognition needs the AI binding, not the database.
+  // These need the AI binding, not the database.
   if (url.pathname === '/api/recognise' && request.method === 'POST') {
     return recognise(env, request);
+  }
+  if (url.pathname === '/api/model-licence' && request.method === 'POST') {
+    return acceptModelLicence(env, request);
+  }
+  if (url.pathname === '/api/config' && request.method === 'GET') {
+    return json(describeBindings(env));
   }
   if (!env.DB) return json({ error: 'No database binding configured' }, 503);
 
@@ -84,7 +91,12 @@ async function handleApi(request, env, url) {
  * prices in front of a TME under the banner of a real model, which is worse than an error.
  */
 async function recognise(env, request) {
-  if (!env.AI) {
+  const body = await request.json();
+  const { image, model, skus = [], currency = 'SGD' } = body ?? {};
+
+  // OpenAI models are called directly and need only the key; the rest need the AI binding.
+  const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
+  if (descriptor?.kind !== 'openai' && !env.AI) {
     return json(
       {
         error: 'No AI binding configured',
@@ -93,9 +105,6 @@ async function recognise(env, request) {
       503,
     );
   }
-
-  const body = await request.json();
-  const { image, model, skus = [], currency = 'SGD' } = body ?? {};
 
   if (typeof image !== 'string' || !image.length) throw new Error('image is required');
   if (typeof model !== 'string' || !model.length) throw new Error('model is required');
@@ -126,29 +135,117 @@ async function recognise(env, request) {
 }
 
 /**
- * Cloudflare-hosted vision models take `{ prompt, image }` where image is a base64 string;
- * models routed through AI Gateway take OpenAI-style multimodal `messages`.
+ * Workers AI vision models do not share an input shape, so each model declares its own in
+ * the catalogue. Third-party models additionally route through AI Gateway.
  */
 async function runModel(env, model, prompt, base64) {
-  if (model.startsWith('@cf/')) {
-    return env.AI.run(model, { prompt, image: `data:image/jpeg;base64,${base64}`, max_tokens: 1500 });
+  const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
+
+  if (descriptor?.kind === 'openai') return callOpenAI(env, descriptor, prompt, base64);
+
+  const shape = descriptor?.input ?? (model.startsWith('@cf/') ? 'image_url' : 'messages');
+  const input = buildModelInput(shape, prompt, base64);
+
+  if (model.startsWith('@cf/')) return env.AI.run(model, input);
+  return env.AI.run(model, input, { gateway: { id: env.AI_GATEWAY_ID || 'default' } });
+}
+
+/**
+ * Calls OpenAI directly with the account's own key.
+ *
+ * The key lives in the Worker's secret store and is read here only. It is never written to
+ * the database, never returned by any endpoint, and never reaches the browser — this
+ * application has no authentication, so a key it could hand out would be a key anyone with
+ * the URL could take.
+ *
+ * JSON mode is requested, which removes most of the prose-wrapping the parser otherwise has
+ * to cope with.
+ */
+export async function callOpenAI(env, descriptor, prompt, base64) {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error(
+      'OPENAI_API_KEY is not configured. Add it as a Worker secret (Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type Secret).',
+    );
   }
-  return env.AI.run(
-    model,
-    {
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: descriptor.api_model,
+      max_tokens: 1500,
+      response_format: { type: 'json_object' },
       messages: [
         {
           role: 'user',
           content: [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'high' } },
           ],
         },
       ],
-      max_tokens: 1500,
-    },
-    { gateway: { id: env.AI_GATEWAY_ID || 'default' } },
-  );
+    }),
+  });
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = body?.error?.message ?? `HTTP ${response.status}`;
+    const code = body?.error?.code ? ` (${body.error.code})` : '';
+    throw new Error(`OpenAI: ${detail}${code}`);
+  }
+  return body;
+}
+
+/** What is actually wired up, so Admin can show it instead of guessing. */
+function describeBindings(env) {
+  return {
+    ai_binding: Boolean(env.AI),
+    db_binding: Boolean(env.DB),
+    ai_gateway_id: env.AI_GATEWAY_ID || 'default',
+    seed_token_configured: Boolean(env.SEED_TOKEN),
+    // Presence only. The value is never returned by any endpoint.
+    openai_key_configured: Boolean(env.OPENAI_API_KEY),
+    models: RECOGNITION_MODELS.filter((m) => m.reads_image).map((m) => ({
+      id: m.id,
+      label: m.label,
+      tier: m.tier,
+      input: m.input,
+      requires_licence: Boolean(m.licence),
+    })),
+  };
+}
+
+/**
+ * Accepts a model's licence by sending the literal prompt the provider requires.
+ *
+ * This is a legal act — Meta's terms include a representation about where the accepting
+ * party is domiciled — so it is never done automatically as part of a failed call. The
+ * caller must ask for it explicitly, having been shown the terms.
+ */
+async function acceptModelLicence(env, request) {
+  if (!env.AI) return json({ error: 'No AI binding configured' }, 503);
+
+  const { model, confirmed } = (await request.json()) ?? {};
+  const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
+
+  if (!descriptor) return json({ error: `Unknown model: ${model}` }, 400);
+  if (!descriptor.licence) {
+    return json({ error: `${model} does not require a licence acceptance.` }, 400);
+  }
+  if (confirmed !== true) {
+    return json({ error: 'The licence must be confirmed explicitly.' }, 400);
+  }
+
+  try {
+    // The provider gate expects exactly this prompt, once per account per model.
+    const result = await env.AI.run(model, { prompt: 'agree' });
+    return json({ accepted: true, model, licence: descriptor.licence, response: extractText(result) });
+  } catch (err) {
+    return json({ error: explainModelFailure(err, model), raw_error: err.message }, 502);
+  }
 }
 
 /**
@@ -161,6 +258,21 @@ async function runModel(env, model, prompt, base64) {
 export function explainModelFailure(err, model) {
   const message = String(err?.message ?? err ?? '');
 
+  if (/OPENAI_API_KEY is not configured/i.test(message)) {
+    return message;
+  }
+  if (/openai:.*(invalid_api_key|incorrect api key|401)/i.test(message)) {
+    return `The OpenAI key was rejected. Check the OPENAI_API_KEY secret on the Worker — it must be a live key for an account with access to ${model}.`;
+  }
+  if (/insufficient_quota|exceeded your current quota/i.test(message)) {
+    return `The OpenAI account has no remaining quota. Add billing at platform.openai.com, or switch to a Cloudflare-hosted model marked "Free allocation".`;
+  }
+  if (/model_not_found|does not exist or you do not have access/i.test(message)) {
+    return `${model} is not available on this OpenAI account. Some models need a paid account or a verified organisation; try OpenAI GPT-4.1 mini, or a Cloudflare-hosted model.`;
+  }
+  if (/5016|you must submit the prompt/i.test(message)) {
+    return `${model} requires a one-time licence acceptance before first use. Open Admin → Recognition provider, read the licence and acceptable-use policy linked there, and press "Accept licence". Note the terms exclude parties domiciled in the European Union.`;
+  }
   if (/2021|insufficient .*credit/i.test(message)) {
     return `${model} is a paid model: it needs the Workers Paid plan or prepaid AI Gateway credits. Choose a model marked "Free daily allocation" in Admin → Recognition provider — Llama 3.2 11B Vision is the recommended one.`;
   }
