@@ -74,12 +74,12 @@ just an asset upload and is safe to repeat.
 
 ### Trying the demo
 
-1. Open the app — you start as **Wei Ling Tan (Trade Marketer)**.
+1. Open the app — you start as **TME East** (a Trade Marketer).
 2. **Start Price Check → search "Punggol" → Punggol Central Minimart.**
 3. **Choose from Gallery**, or tap one of the **sample shelf photos** on that screen — the
    recognition simulator works with any image, including a real photo from your device.
 4. Confirm the detected prices, correct one, record a field action, submit.
-5. Switch the user dropdown (top right) to **Priya Nair — Manager** and open the
+5. Switch the user dropdown (top right) to **Commercial Manager** and open the
    **Price Control Tower**: the visit you just submitted is already in the KPIs, the price
    position matrix and the opportunity list.
 
@@ -156,18 +156,41 @@ share a scope, a priority and an overlapping date window, because those would be
 
 ---
 
+## Singapore market specifics reflected in the data
+
+- **Brands and owners are real.** JTI's Singapore portfolio here is Winston, Mevius, Camel
+  and LD; competitors are Marlboro / L&M / Chesterfield (Philip Morris International),
+  Dunhill / Pall Mall / Lucky Strike (British American Tobacco) and Davidoff (Imperial
+  Brands). Note that **L&M is a PMI brand**, not a JTI one — the specification's illustrative
+  example placed it on the JTI side.
+- **Prices are indicative, not a price list.** They sit in the SGD 12.60–16.00 band Singapore
+  retail occupies, with Marlboro at the top and LD at the bottom. Replace them with JTI
+  master data before any real use.
+- **Point-of-sale display is banned** (since 1 August 2017): general retailers must keep
+  tobacco out of the public's line of sight in plain storage. What a TME can photograph is
+  therefore the **price list** and pack faces inside an opened cabinet — not an open shelf.
+  The sample capture images are drawn that way.
+- **Standardised packaging** (since 1 July 2020) means no brand colours or logos, so a real
+  recognition provider must read the brand name in a standard font against a drab base, with
+  graphic health warnings over most of the pack. That makes accurate OCR of the price list
+  more valuable than pack recognition.
+
+Demo users are labelled by role and territory — TME East, Commercial Manager, Master Data
+Admin — so nothing in the dataset reads as a real individual.
+
 ## What the seeded demo data demonstrates
 
-24 outlets across Central / North / East / West, four channels, six JTI SKUs, six competitor
-SKUs and roughly 860 price observations over 12 weeks — engineered to show:
+24 outlets across Central / North / East / West, four channels, seven JTI SKUs (Winston,
+Mevius, Camel, LD), eight competitor SKUs from PMI, BAT and Imperial, and roughly 900 price
+observations over 12 weeks — engineered to show:
 
 - the same JTI SKU sold at different prices across outlets (real dispersion);
 - observations below, within and above the recommended range;
-- a **superseded price rule** (the Strategic SKU recommendation moved from SGD 13.50 to
-  13.70 forty-five days ago) so historical integrity is visible;
-- a **territory override** (East prices L&M Double Forward XL Fresh at 14.40, not 14.30);
+- a **superseded price rule** (the Strategic SKU recommendation moved from SGD 13.40 to
+  13.60 forty-five days ago) so historical integrity is visible;
+- a **territory override** (East prices Mevius Original at 14.50, not 14.40);
 - a **future-dated rule** that is visible in admin but does not affect past observations;
-- a **material competitor price drop** (Competitor A Core, −SGD 0.50, 20 days ago);
+- a **material competitor price drop** (Pall Mall Red, −SGD 0.50, 20 days ago);
 - a **persistent Strategic SKU opportunity** at Punggol Central Minimart;
 - **low-confidence detections** feeding the Image Review queue;
 - a **TME engagement followed by an observed price improvement** at Yishun Mini Mart

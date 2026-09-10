@@ -6,7 +6,7 @@ import { MARKET_CONTEXT_NOTE, disclaimer } from './dom.js';
 
 export const narrow = true;
 
-export const title = (ctx) => `Hello, ${ctx.user.name.split(' ')[0]}`;
+export const title = (ctx) => ctx.user.name;
 export const subtitle = () => 'Field price capture · Singapore';
 
 export function render(ctx) {
