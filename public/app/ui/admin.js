@@ -271,15 +271,19 @@ function recognitionTab(ctx) {
   const card = (p) => {
     const selected = p.id === active.id;
     const simulated = p.reads_image === false;
-    return `<div class="detection detection--${selected ? 'good' : 'none'}" style="cursor:pointer"
+    const paid = p.tier === 'paid';
+    return `<div class="detection detection--${selected ? 'good' : paid ? 'watch' : 'none'}" style="cursor:pointer"
         data-action="pick-model" data-model="${esc(p.id)}">
       <div class="detection__head">
         <div class="detection__body">
           <div class="detection__name">${esc(p.label)}
             ${selected ? '<span class="pill pill--good">✓ Active</span>' : ''}
+            ${p.recommended && !selected ? '<span class="pill pill--info">Recommended</span>' : ''}
             ${simulated
               ? '<span class="pill pill--watch">! Does not read the image</span>'
-              : '<span class="pill pill--info">Reads the image</span>'}
+              : paid
+                ? '<span class="pill pill--risk">$ Needs paid plan or credits</span>'
+                : '<span class="pill pill--good">✓ Free allocation</span>'}
           </div>
           <div class="detection__meta mono xsmall">${esc(p.id)}</div>
           <div class="detection__meta">${esc(p.description ?? '')}</div>
@@ -288,6 +292,12 @@ function recognitionTab(ctx) {
       </div>
     </div>`;
   };
+
+  // Free options first, so the cheapest working choice is the one in front of the reader.
+  const ordered = [...providers].sort((a, b) => {
+    const rank = (p) => (p.reads_image === false ? 0 : p.tier === 'paid' ? 2 : 1);
+    return rank(a) - rank(b);
+  });
 
   return `<div class="card">
     <div class="card__head"><h2>How recognition works</h2></div>
@@ -306,7 +316,8 @@ function recognitionTab(ctx) {
     </div>
 
     <h3 class="mt">Available models</h3>
-    ${providers.map(card).join('')}
+    ${ordered.map(card).join('')}
+    ${disclaimer('Workers AI includes <strong>10,000 Neurons per day at no charge</strong> on both the Free and Paid plans. Models marked <em>Free allocation</em> run inside it. Models marked <em>Needs paid plan or credits</em> are frontier or third-party models and will fail with a credits error until billing is arranged.')}
     <p class="xsmall muted">Cloudflare-hosted models need only the <span class="mono">[ai]</span> binding. Models routed through AI Gateway additionally need a gateway with Unified Billing, where Cloudflare holds the provider credentials — no API key is stored in this application.</p>
   </div>
 

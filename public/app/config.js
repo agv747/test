@@ -97,48 +97,72 @@ export const RECOGNITION_MODELS = [
     id: 'mock-simulator',
     label: 'MVP Simulator',
     kind: 'simulated',
+    tier: 'free',
     reads_image: false,
     description:
-      'Generates plausible detections from the SKU catalogue and price rules without looking at the image. Deterministic, free, offline — for demos and development only.',
+      'Generates plausible detections from the SKU catalogue and price rules without looking at the image. Deterministic, offline — for demos and development only.',
     cost: 'Free',
-  },
-  {
-    id: '@cf/qwen/qwen3.8-27b',
-    label: 'Qwen 3.8 27B',
-    kind: 'workers-ai',
-    reads_image: true,
-    description:
-      'Vision-language model with a large context window. The strongest Cloudflare-hosted option for reading a dense price list.',
-    cost: '$0.45 / M input tokens, $3.20 / M output tokens',
-  },
-  {
-    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
-    label: 'Llama 4 Scout 17B',
-    kind: 'workers-ai',
-    reads_image: true,
-    description: 'Natively multimodal mixture-of-experts model. A good balance of speed and accuracy.',
-    cost: 'See Workers AI pricing',
   },
   {
     id: '@cf/meta/llama-3.2-11b-vision-instruct',
     label: 'Llama 3.2 11B Vision',
     kind: 'workers-ai',
+    tier: 'free',
+    recommended: true,
     reads_image: true,
-    description: 'Smaller and cheaper vision model. Try it when the price list is clean and high-contrast.',
-    cost: 'See Workers AI pricing',
+    description:
+      'Cloudflare-hosted vision model. Reads the price list directly and is the recommended starting point — it runs inside the free daily allocation.',
+    cost: 'Free daily allocation (10,000 Neurons/day)',
+  },
+  {
+    id: '@cf/llava-hf/llava-1.5-7b-hf',
+    label: 'LLaVA 1.5 7B',
+    kind: 'workers-ai',
+    tier: 'free',
+    reads_image: true,
+    description:
+      'Smaller image-to-text model. Cheapest in Neurons, so it stretches the free allocation furthest, but less reliable on a dense price list.',
+    cost: 'Free daily allocation (10,000 Neurons/day)',
+  },
+  {
+    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
+    label: 'Llama 4 Scout 17B',
+    kind: 'workers-ai',
+    tier: 'free',
+    reads_image: true,
+    description:
+      'Natively multimodal mixture-of-experts model. Stronger than Llama 3.2, and heavier — it consumes the daily allocation faster.',
+    cost: 'Free daily allocation, then Workers AI rates',
+  },
+  {
+    id: '@cf/qwen/qwen3.8-27b',
+    label: 'Qwen 3.8 27B',
+    kind: 'workers-ai',
+    tier: 'paid',
+    reads_image: true,
+    description:
+      'The strongest Cloudflare-hosted option for a dense price list. A frontier model: it needs the Workers Paid plan or prepaid AI Gateway credits.',
+    cost: '$0.45 / M input tokens, $3.20 / M output tokens',
   },
   {
     id: 'openai/gpt-4.1-mini',
     label: 'GPT-4.1 mini (via AI Gateway)',
     kind: 'gateway',
+    tier: 'paid',
     reads_image: true,
     description:
-      'Third-party model routed through AI Gateway. Requires a gateway with Unified Billing; Cloudflare holds the provider credentials, so no API key is stored here.',
+      'Third-party model routed through AI Gateway. Needs a gateway with Unified Billing and prepaid credits; Cloudflare holds the provider credentials, so no API key is stored here.',
     cost: 'Billed through AI Gateway credits',
   },
 ];
 
 export const DEFAULT_RECOGNITION_MODEL = 'mock-simulator';
+
+/**
+ * The model to suggest when someone wants real recognition without arranging billing.
+ * Kept separate from the default so a fresh install still starts on the simulator.
+ */
+export const RECOMMENDED_FREE_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 
 export const PRICE_POSITION_STATUS = {
   WITHIN: 'Within Recommended Range',

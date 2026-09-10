@@ -246,13 +246,20 @@ observations over 12 weeks — engineered to show:
 **Admin → Recognition provider** picks the model. The choice is stored in configuration and
 survives a reload.
 
-| Model | Reads the image? | Needs |
+| Model | Reads the image? | Cost |
 |---|---|---|
-| MVP Simulator | **No** | nothing |
-| `@cf/qwen/qwen3.8-27b` | Yes | `[ai]` binding |
-| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | `[ai]` binding |
-| `@cf/meta/llama-3.2-11b-vision-instruct` | Yes | `[ai]` binding |
-| `openai/gpt-4.1-mini` | Yes | `[ai]` binding + AI Gateway with Unified Billing |
+| MVP Simulator | **No** | free, offline |
+| `@cf/meta/llama-3.2-11b-vision-instruct` **(recommended)** | Yes | free daily allocation |
+| `@cf/llava-hf/llava-1.5-7b-hf` | Yes | free daily allocation |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free daily allocation, then Workers AI rates |
+| `@cf/qwen/qwen3.8-27b` | Yes | **paid** — Workers Paid plan or AI Gateway credits |
+| `openai/gpt-4.1-mini` | Yes | **paid** — AI Gateway credits |
+
+Workers AI includes **10,000 Neurons per day at no charge** on both the Free and Paid plans.
+Models marked *free allocation* run inside it; the frontier and third-party models fail with
+a credits error until billing is arranged. The Admin screen marks each model, and the Worker
+turns provider codes into instructions — `2021: Insufficient AI Gateway credits` becomes a
+sentence naming the free models to use instead.
 
 The **simulator does not look at the photograph.** It generates plausible detections from the
 SKU catalogue and the effective price rules, seeded from the image file identity so the same

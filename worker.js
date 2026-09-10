@@ -109,7 +109,7 @@ async function recognise(env, request) {
   try {
     raw = await runModel(env, model, prompt, base64);
   } catch (err) {
-    return json({ error: `Model call failed: ${err.message}`, model }, 502);
+    return json({ error: explainModelFailure(err, model), model, raw_error: err.message }, 502);
   }
 
   const text = extractText(raw);
@@ -149,6 +149,34 @@ async function runModel(env, model, prompt, base64) {
     },
     { gateway: { id: env.AI_GATEWAY_ID || 'default' } },
   );
+}
+
+/**
+ * Turns a provider error code into something an operator can act on.
+ *
+ * The raw codes ("2021: Insufficient AI Gateway credits") say nothing about what to do
+ * next, and the thing to do next is almost always "pick a model that runs inside the free
+ * daily allocation".
+ */
+export function explainModelFailure(err, model) {
+  const message = String(err?.message ?? err ?? '');
+
+  if (/2021|insufficient .*credit/i.test(message)) {
+    return `${model} is a paid model: it needs the Workers Paid plan or prepaid AI Gateway credits. Choose a model marked "Free daily allocation" in Admin → Recognition provider — Llama 3.2 11B Vision is the recommended one.`;
+  }
+  if (/5035|requires the workers paid/i.test(message) || /\b403\b/.test(message)) {
+    return `${model} requires the Workers Paid plan. Choose a model marked "Free daily allocation" in Admin → Recognition provider, or upgrade the account.`;
+  }
+  if (/3040|out of capacity/i.test(message)) {
+    return `${model} is temporarily out of capacity at Cloudflare. Retry, or pick another model.`;
+  }
+  if (/\b429\b|rate limit/i.test(message)) {
+    return `Rate limited, or the 10,000 Neurons/day free allocation is spent — it resets at 00:00 UTC. Retry later or pick a lighter model.`;
+  }
+  if (/no such model|not found|invalid model/i.test(message)) {
+    return `${model} is not available on this account. Cloudflare's model catalogue changes; pick another model in Admin → Recognition provider.`;
+  }
+  return `Model call failed: ${message}`;
 }
 
 /** Vision models differ in where they put the answer; take the first shape that has text. */
