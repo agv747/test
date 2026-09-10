@@ -43,39 +43,68 @@ const CHANNELS = [
   { id: 'ch-other', name: 'Other' },
 ];
 
+/**
+ * Demo users carry role-and-territory labels rather than personal names, so nothing in the
+ * dataset reads as a real individual.
+ */
 const USERS = [
-  { id: 'usr-tme-1', name: 'Wei Ling Tan', role: 'field', territory_id: 'ter-east', active: true },
-  { id: 'usr-tme-2', name: 'Arun Kumar', role: 'field', territory_id: 'ter-north', active: true },
-  { id: 'usr-tme-3', name: 'Siti Rahman', role: 'field', territory_id: 'ter-west', active: true },
-  { id: 'usr-tme-4', name: 'Jason Ong', role: 'field', territory_id: 'ter-central', active: true },
-  { id: 'usr-mgr-1', name: 'Priya Nair', role: 'manager', territory_id: null, active: true },
-  { id: 'usr-adm-1', name: 'Daniel Lim', role: 'admin', territory_id: null, active: true },
+  { id: 'usr-tme-1', name: 'TME East', role: 'field', territory_id: 'ter-east', active: true },
+  { id: 'usr-tme-2', name: 'TME North', role: 'field', territory_id: 'ter-north', active: true },
+  { id: 'usr-tme-3', name: 'TME West', role: 'field', territory_id: 'ter-west', active: true },
+  { id: 'usr-tme-4', name: 'TME Central', role: 'field', territory_id: 'ter-central', active: true },
+  { id: 'usr-mgr-1', name: 'Commercial Manager', role: 'manager', territory_id: null, active: true },
+  { id: 'usr-adm-1', name: 'Master Data Admin', role: 'admin', territory_id: null, active: true },
 ];
 
+/**
+ * Brands actually retailed in Singapore, mapped to their real parent companies.
+ *
+ * Note that L&M is a Philip Morris International brand, not a JTI one — the specification's
+ * illustrative example placed it on the JTI side. JTI's own Singapore portfolio is Winston,
+ * Camel, Mevius and LD, which is what the own-brand list below uses.
+ *
+ * Prices are indicative demo figures in the SGD 12.60–16.00 band that Singapore retail sat
+ * in; they are not a price list and must be replaced with JTI master data before real use.
+ */
 const BRANDS = [
-  { id: 'brd-lm', name: 'L&M', company: 'JTI', is_jti: true },
-  { id: 'brd-compa', name: 'Competitor A', company: 'Competitor A Holdings', is_jti: false },
-  { id: 'brd-compb', name: 'Competitor B', company: 'Competitor B Group', is_jti: false },
+  // JTI
+  { id: 'brd-winston', name: 'Winston', company: 'JTI', is_jti: true },
+  { id: 'brd-camel', name: 'Camel', company: 'JTI', is_jti: true },
+  { id: 'brd-mevius', name: 'Mevius', company: 'JTI', is_jti: true },
+  { id: 'brd-ld', name: 'LD', company: 'JTI', is_jti: true },
+  // Philip Morris International
+  { id: 'brd-marlboro', name: 'Marlboro', company: 'Philip Morris International', is_jti: false },
+  { id: 'brd-lm', name: 'L&M', company: 'Philip Morris International', is_jti: false },
+  { id: 'brd-chesterfield', name: 'Chesterfield', company: 'Philip Morris International', is_jti: false },
+  // British American Tobacco
+  { id: 'brd-dunhill', name: 'Dunhill', company: 'British American Tobacco', is_jti: false },
+  { id: 'brd-pallmall', name: 'Pall Mall', company: 'British American Tobacco', is_jti: false },
+  { id: 'brd-lucky', name: 'Lucky Strike', company: 'British American Tobacco', is_jti: false },
+  // Imperial Brands
+  { id: 'brd-davidoff', name: 'Davidoff', company: 'Imperial Brands', is_jti: false },
 ];
 
 /** JTI SKUs with their demo recommended price (§29). */
 const JTI_SKUS = [
-  { id: 'sku-lm-rlxl', sku_code: 'LM-RL-XL', name: 'L&M Red Line XL', recommended: 13.7, is_strategic: true, strategic_priority: 'High', tier: 'Value' },
-  { id: 'sku-lm-blxl', sku_code: 'LM-BL-XL', name: 'L&M Blue Line XL', recommended: 13.7, is_strategic: false, strategic_priority: null, tier: 'Value' },
-  { id: 'sku-lm-glxl', sku_code: 'LM-GL-XL', name: 'L&M Green Line XL Fresh', recommended: 13.7, is_strategic: false, strategic_priority: null, tier: 'Value' },
-  { id: 'sku-lm-dfxl', sku_code: 'LM-DF-XL', name: 'L&M Double Forward XL Fresh', recommended: 14.3, is_strategic: true, strategic_priority: 'Medium', tier: 'Mid Tier' },
-  { id: 'sku-lm-rl', sku_code: 'LM-RL', name: 'L&M Red Line', recommended: 14.3, is_strategic: false, strategic_priority: null, tier: 'Mid Tier' },
-  { id: 'sku-lm-bl', sku_code: 'LM-BL', name: 'L&M Blue Line', recommended: 14.3, is_strategic: false, strategic_priority: null, tier: 'Mid Tier' },
+  { id: 'sku-jti-winston-red', brand_id: 'brd-winston', sku_code: 'WIN-RED', name: 'Winston Red', recommended: 13.6, is_strategic: true, strategic_priority: 'High', tier: 'Mainstream' },
+  { id: 'sku-jti-winston-blue', brand_id: 'brd-winston', sku_code: 'WIN-BLU', name: 'Winston Blue', recommended: 13.6, is_strategic: false, strategic_priority: null, tier: 'Mainstream' },
+  { id: 'sku-jti-mevius-original', brand_id: 'brd-mevius', sku_code: 'MEV-ORG', name: 'Mevius Original', recommended: 14.4, is_strategic: true, strategic_priority: 'Medium', tier: 'Core' },
+  { id: 'sku-jti-mevius-sky', brand_id: 'brd-mevius', sku_code: 'MEV-SKY', name: 'Mevius Sky Blue', recommended: 14.4, is_strategic: false, strategic_priority: null, tier: 'Core' },
+  { id: 'sku-jti-camel-filters', brand_id: 'brd-camel', sku_code: 'CAM-FIL', name: 'Camel Filters', recommended: 12.9, is_strategic: false, strategic_priority: null, tier: 'Value' },
+  { id: 'sku-jti-camel-blue', brand_id: 'brd-camel', sku_code: 'CAM-BLU', name: 'Camel Blue', recommended: 12.9, is_strategic: false, strategic_priority: null, tier: 'Value' },
+  { id: 'sku-jti-ld-red', brand_id: 'brd-ld', sku_code: 'LD-RED', name: 'LD Red', recommended: 12.6, is_strategic: false, strategic_priority: null, tier: 'Low Price' },
 ];
 
-/** Illustrative competitor SKUs — demo names only, not a business assumption (§29). */
+/** Competitor SKUs retailed in the same outlets. */
 const COMPETITOR_SKUS = [
-  { id: 'sku-ca-value', brand_id: 'brd-compa', sku_code: 'CA-VAL', name: 'Competitor A Value', base: 13.5, tier: 'Value' },
-  { id: 'sku-ca-core', brand_id: 'brd-compa', sku_code: 'CA-COR', name: 'Competitor A Core', base: 14.1, tier: 'Core' },
-  { id: 'sku-ca-prem', brand_id: 'brd-compa', sku_code: 'CA-PRM', name: 'Competitor A Premium', base: 15.8, tier: 'Premium' },
-  { id: 'sku-cb-value', brand_id: 'brd-compb', sku_code: 'CB-VAL', name: 'Competitor B Value', base: 13.4, tier: 'Value' },
-  { id: 'sku-cb-core', brand_id: 'brd-compb', sku_code: 'CB-COR', name: 'Competitor B Core', base: 14.0, tier: 'Core' },
-  { id: 'sku-cb-prem', brand_id: 'brd-compb', sku_code: 'CB-PRM', name: 'Competitor B Premium', base: 16.1, tier: 'Premium' },
+  { id: 'sku-pmi-marlboro-red', brand_id: 'brd-marlboro', sku_code: 'MLB-RED', name: 'Marlboro Red', base: 16.0, tier: 'Premium' },
+  { id: 'sku-pmi-marlboro-gold', brand_id: 'brd-marlboro', sku_code: 'MLB-GLD', name: 'Marlboro Gold', base: 16.0, tier: 'Premium' },
+  { id: 'sku-imp-davidoff', brand_id: 'brd-davidoff', sku_code: 'DAV-CLS', name: 'Davidoff Classic', base: 15.8, tier: 'Premium' },
+  { id: 'sku-bat-dunhill-red', brand_id: 'brd-dunhill', sku_code: 'DUN-RED', name: 'Dunhill Fine Cut Red', base: 15.6, tier: 'Premium' },
+  { id: 'sku-bat-lucky-red', brand_id: 'brd-lucky', sku_code: 'LKY-RED', name: 'Lucky Strike Red', base: 14.3, tier: 'Core' },
+  { id: 'sku-pmi-lm-red', brand_id: 'brd-lm', sku_code: 'LM-RED', name: 'L&M Red Label', base: 13.9, tier: 'Mainstream' },
+  { id: 'sku-pmi-chesterfield', brand_id: 'brd-chesterfield', sku_code: 'CHE-RED', name: 'Chesterfield Red', base: 13.4, tier: 'Mainstream' },
+  { id: 'sku-bat-pallmall-red', brand_id: 'brd-pallmall', sku_code: 'PAL-RED', name: 'Pall Mall Red', base: 13.3, tier: 'Mainstream' },
 ];
 
 const OUTLET_DEFS = [
@@ -112,7 +141,7 @@ const OUTLET_DEFS = [
 /** Outlets whose pricing behaviour is scripted for the demo narrative. */
 const SCRIPTED = {
   /** Persistent, strategic, above-range opportunity in the East. */
-  'out-e1': { skuOverrides: { 'sku-lm-rlxl': 14.4 }, note: 'persistent-strategic' },
+  'out-e1': { skuOverrides: { 'sku-jti-winston-red': 14.3 }, note: 'persistent-strategic' },
   /**
    * TME engagement in the North followed by an observed price improvement (§14).
    * The engagement is anchored to a VISIT INDEX rather than a calendar day so the
@@ -121,7 +150,7 @@ const SCRIPTED = {
    */
   'out-n1': {
     engagement: {
-      sku_id: 'sku-lm-rlxl',
+      sku_id: 'sku-jti-winston-red',
       before: 14.5,
       after: 14.0,
       competitor: 13.7,
@@ -136,13 +165,13 @@ const SCRIPTED = {
   'out-c5': { offset: 0.55 },
 };
 
-/** Competitor A Core drops SGD 0.50 twenty days ago — the material competitor move (§13). */
-const COMPETITOR_MOVE = { sku_id: 'sku-ca-core', from_day: -20, delta: -0.5 };
+/** Pall Mall Red drops SGD 0.50 twenty days ago — the material competitor move (§13). */
+const COMPETITOR_MOVE = { sku_id: 'sku-bat-pallmall-red', from_day: -20, delta: -0.5 };
 
 function buildSkus() {
   const jti = JTI_SKUS.map((s) => ({
     id: s.id,
-    brand_id: 'brd-lm',
+    brand_id: s.brand_id,
     sku_code: s.sku_code,
     name: s.name,
     is_jti: true,
@@ -174,7 +203,7 @@ function buildPriceRules(now) {
       territory_id: null,
       channel_id: null,
       outlet_id: null,
-      brand_id: 'brd-lm',
+      brand_id: sku.brand_id,
       sku_id: sku.id,
       recommended_price: sku.recommended,
       recommended_min: round(sku.recommended - 0.2, 2),
@@ -188,20 +217,20 @@ function buildPriceRules(now) {
   });
 
   // Superseded historical rule for the Strategic SKU — proves historical integrity (§25).
-  const rlxl = rules.find((r) => r.sku_id === 'sku-lm-rlxl');
-  rlxl.effective_from = iso(now, -45);
-  rlxl.notes = 'Market-level recommendation (uplift effective from 45 days ago)';
+  const winstonRed = rules.find((r) => r.sku_id === 'sku-jti-winston-red');
+  winstonRed.effective_from = iso(now, -45);
+  winstonRed.notes = 'Market-level recommendation (uplift effective from 45 days ago)';
   rules.push({
-    id: 'pr-LM-RL-XL-mkt-prev',
+    id: 'pr-WIN-RED-mkt-prev',
     market: 'SG',
     territory_id: null,
     channel_id: null,
     outlet_id: null,
-    brand_id: 'brd-lm',
-    sku_id: 'sku-lm-rlxl',
-    recommended_price: 13.5,
-    recommended_min: 13.3,
-    recommended_max: 13.7,
+    brand_id: 'brd-winston',
+    sku_id: 'sku-jti-winston-red',
+    recommended_price: 13.4,
+    recommended_min: 13.2,
+    recommended_max: 13.6,
     effective_from: iso(now, -365),
     effective_to: iso(now, -46),
     priority: 0,
@@ -211,16 +240,16 @@ function buildPriceRules(now) {
 
   // Territory override (more specific than market level).
   rules.push({
-    id: 'pr-LM-DF-XL-east',
+    id: 'pr-MEV-ORG-east',
     market: 'SG',
     territory_id: 'ter-east',
     channel_id: null,
     outlet_id: null,
-    brand_id: 'brd-lm',
-    sku_id: 'sku-lm-dfxl',
-    recommended_price: 14.4,
-    recommended_min: 14.2,
-    recommended_max: 14.6,
+    brand_id: 'brd-mevius',
+    sku_id: 'sku-jti-mevius-original',
+    recommended_price: 14.5,
+    recommended_min: 14.3,
+    recommended_max: 14.7,
     effective_from: iso(now, -120),
     effective_to: null,
     priority: 10,
@@ -230,16 +259,16 @@ function buildPriceRules(now) {
 
   // Future-dated rule — visible in admin, not yet effective for observations.
   rules.push({
-    id: 'pr-LM-BL-mkt-future',
+    id: 'pr-CAM-FIL-mkt-future',
     market: 'SG',
     territory_id: null,
     channel_id: null,
     outlet_id: null,
-    brand_id: 'brd-lm',
-    sku_id: 'sku-lm-bl',
-    recommended_price: 14.5,
-    recommended_min: 14.3,
-    recommended_max: 14.7,
+    brand_id: 'brd-camel',
+    sku_id: 'sku-jti-camel-filters',
+    recommended_price: 13.1,
+    recommended_min: 12.9,
+    recommended_max: 13.3,
     effective_from: iso(now, 30),
     effective_to: null,
     priority: 5,
@@ -251,14 +280,19 @@ function buildPriceRules(now) {
 }
 
 function buildCompetitorMappings(now) {
+  // [id, JTI SKU, competitor SKU, priority, gap min, gap max, index min, index max]
   const defs = [
-    ['cm-1', 'sku-lm-rlxl', 'sku-ca-value', 100, 0.0, 0.3, 100, 103],
-    ['cm-2', 'sku-lm-rlxl', 'sku-cb-value', 60, 0.1, 0.45, 100.5, 103.5],
-    ['cm-3', 'sku-lm-blxl', 'sku-cb-value', 100, 0.1, 0.45, 100.5, 103.5],
-    ['cm-4', 'sku-lm-glxl', 'sku-ca-value', 100, 0.0, 0.3, 100, 103],
-    ['cm-5', 'sku-lm-dfxl', 'sku-ca-core', 100, 0.0, 0.35, 100, 102.5],
-    ['cm-6', 'sku-lm-rl', 'sku-cb-core', 100, 0.1, 0.45, 100.5, 103],
-    ['cm-7', 'sku-lm-bl', 'sku-ca-core', 100, 0.0, 0.35, 100, 102.5],
+    // Winston (mainstream) benchmarks against the BAT and PMI mainstream brands.
+    ['cm-1', 'sku-jti-winston-red', 'sku-bat-pallmall-red', 100, 0.0, 0.35, 100, 103],
+    ['cm-2', 'sku-jti-winston-red', 'sku-pmi-lm-red', 60, -0.4, 0.0, 96.5, 100],
+    ['cm-3', 'sku-jti-winston-blue', 'sku-pmi-chesterfield', 100, 0.0, 0.35, 100, 103],
+    // Mevius (core) benchmarks against Lucky Strike.
+    ['cm-4', 'sku-jti-mevius-original', 'sku-bat-lucky-red', 100, 0.0, 0.35, 100, 102.5],
+    ['cm-5', 'sku-jti-mevius-sky', 'sku-bat-lucky-red', 100, 0.0, 0.35, 100, 102.5],
+    // Camel and LD sit below the mainstream tier, so they are benchmarked to stay there.
+    ['cm-6', 'sku-jti-camel-filters', 'sku-bat-pallmall-red', 100, -0.6, -0.2, 95, 98.5],
+    ['cm-7', 'sku-jti-camel-blue', 'sku-pmi-chesterfield', 100, -0.7, -0.3, 94.5, 98],
+    ['cm-8', 'sku-jti-ld-red', 'sku-bat-pallmall-red', 100, -0.9, -0.5, 93, 96.5],
   ];
   return defs.map(([id, jti, comp, prio, gapMin, gapMax, idxMin, idxMax]) => ({
     id,
@@ -462,7 +496,7 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
       for (const skuDef of chosenComp) {
         let price;
         const engagement = scripted.engagement;
-        if (engagement && skuDef.id === 'sku-ca-value') {
+        if (engagement && skuDef.id === 'sku-bat-pallmall-red') {
           price = engagement.competitor;
         } else {
           price = toRetail(
@@ -520,7 +554,7 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
       follow_up_date: iso(now, -16),
       notes:
         'Discussed observed price position versus mapped competitor. Outlet agreed to review shelf price at next delivery.',
-      sku_ids: ['sku-lm-rlxl'],
+      sku_ids: ['sku-jti-winston-red'],
     });
   }
 
@@ -540,7 +574,7 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
       action_at: v.submitted_at,
       follow_up_date: iso(now, -7),
       notes: 'Strategic SKU remains above recommended range. Follow-up scheduled.',
-      sku_ids: ['sku-lm-rlxl'],
+      sku_ids: ['sku-jti-winston-red'],
     });
   }
 
@@ -561,7 +595,7 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
       action_at: v.submitted_at,
       follow_up_date: null,
       notes: 'Shared observed competitive position for mapped SKUs.',
-      sku_ids: ['sku-lm-dfxl'],
+      sku_ids: ['sku-jti-mevius-original'],
     });
   });
 

@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 /**
- * Generates placeholder shelf photos for the demo gallery.
+ * Generates placeholder capture images for the demo gallery.
  *
- * These stand in until real shelf photography is dropped into `public/demo-images/`.
- * The recognition simulator keys off the file identity, so any image — synthetic or a
- * real photo — produces a stable, plausible set of detections.
+ * Two Singapore specifics shape what these look like:
+ *
+ *  - **Point-of-sale display ban** (since 1 August 2017): general retailers may not display
+ *    tobacco products within the public's line of sight, and keep them in plain, undecorated
+ *    storage. So what a TME can actually photograph is the price list and the pack faces
+ *    inside an opened cabinet — not an open shelf.
+ *  - **Standardised packaging** (since 1 July 2020): no logos or brand colours; the brand
+ *    name appears in a standard font on a drab base, with graphic health warnings over most
+ *    of the pack.
+ *
+ * These images therefore render drab standardised packs behind a price list, which is the
+ * realistic capture for this market. Replace them with real photography when available —
+ * the recognition simulator keys off file identity, so any image works.
  *
  * Usage: node scripts/make-demo-images.mjs
  */
@@ -16,91 +26,126 @@ import { resolve } from 'node:path';
 const OUT = resolve('public/demo-images');
 await mkdir(OUT, { recursive: true });
 
-const SHELVES = [
+const CAPTURES = [
   {
     file: 'shelf-punggol-central.jpg',
     title: 'Punggol Central Minimart',
+    code: 'SG-E-1042',
     rows: [
-      ['L&M RED LINE XL', '13.70'],
-      ['L&M BLUE LINE XL', '13.70'],
-      ['COMPETITOR A VALUE', '13.50'],
-      ['L&M DOUBLE FORWARD XL', '14.30'],
-      ['COMPETITOR A CORE', '14.10'],
-      ['COMPETITOR B PREMIUM', '16.10'],
+      ['WINSTON', 'Red', '13.60'],
+      ['WINSTON', 'Blue', '13.60'],
+      ['MEVIUS', 'Original', '14.50'],
+      ['PALL MALL', 'Red', '13.30'],
+      ['LUCKY STRIKE', 'Red', '14.30'],
+      ['MARLBORO', 'Red', '16.00'],
     ],
   },
   {
     file: 'shelf-yishun-mini-mart.jpg',
     title: 'Yishun Mini Mart',
+    code: 'SG-N-2011',
     rows: [
-      ['L&M RED LINE XL', '14.00'],
-      ['L&M GREEN LINE XL', '13.80'],
-      ['COMPETITOR A VALUE', '13.70'],
-      ['L&M RED LINE', '14.40'],
-      ['COMPETITOR B CORE', '14.00'],
-      ['COMPETITOR A PREMIUM', '15.80'],
+      ['WINSTON', 'Red', '14.00'],
+      ['CAMEL', 'Filters', '12.90'],
+      ['MEVIUS', 'Original', '14.40'],
+      ['PALL MALL', 'Red', '13.70'],
+      ['L&M', 'Red Label', '13.90'],
+      ['DAVIDOFF', 'Classic', '15.80'],
     ],
   },
   {
     file: 'shelf-jurong-west.jpg',
     title: 'Jurong West Mini Mart',
+    code: 'SG-W-3007',
     rows: [
-      ['L&M BLUE LINE', '14.20'],
-      ['L&M RED LINE XL', '13.60'],
-      ['COMPETITOR B VALUE', '13.40'],
-      ['L&M DOUBLE FORWARD XL', '14.50'],
-      ['COMPETITOR A CORE', '13.60'],
-      ['COMPETITOR B PREMIUM', '16.10'],
+      ['WINSTON', 'Blue', '13.50'],
+      ['LD', 'Red', '12.60'],
+      ['MEVIUS', 'Sky Blue', '14.60'],
+      ['CHESTERFIELD', 'Red', '13.40'],
+      ['DUNHILL', 'Fine Cut Red', '15.60'],
+      ['MARLBORO', 'Gold', '16.00'],
     ],
   },
 ];
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium' });
-const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } });
+const browser = await chromium.launch({
+  executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium',
+});
+const page = await browser.newPage({ viewport: { width: 1200, height: 860 } });
 
-for (const shelf of SHELVES) {
-  await page.setContent(html(shelf));
-  await page.screenshot({ path: `${OUT}/${shelf.file}`, type: 'jpeg', quality: 90 });
-  console.log(`wrote ${shelf.file}`);
+for (const capture of CAPTURES) {
+  await page.setContent(html(capture));
+  await page.screenshot({ path: `${OUT}/${capture.file}`, type: 'jpeg', quality: 90 });
+  console.log(`wrote ${capture.file}`);
 }
 
 await browser.close();
 
-function html({ title, rows }) {
+function html({ title, code, rows }) {
+  // Standardised packaging: drab brown base (Pantone 448C), brand name in a standard font,
+  // graphic health warning occupying most of the face.
   const packs = rows
     .map(
-      ([name, price], i) => `
-      <div class="bay">
-        <div class="stack">${Array.from({ length: 5 }, (_, j) => `<div class="pack pack--${(i + j) % 4}"></div>`).join('')}</div>
-        <div class="label">
-          <div class="desc">${name}</div>
-          <div class="price">$${price}</div>
-        </div>
+      ([brand, variant]) => `
+      <div class="pack">
+        <div class="warning">SMOKING<br />KILLS</div>
+        <div class="packname">${brand}<span>${variant}</span></div>
       </div>`,
     )
     .join('');
 
+  const list = rows
+    .map(
+      ([brand, variant, price]) => `
+      <tr>
+        <td class="brand">${brand} <span>${variant}</span></td>
+        <td class="dots"></td>
+        <td class="price">$${price}</td>
+      </tr>`,
+    )
+    .join('');
+
   return `<!doctype html><meta charset="utf-8"><style>
-    body { margin:0; font-family: Arial, Helvetica, sans-serif; background:#2b2b30; }
-    .shelf { padding:28px 24px; }
-    .header { color:#cfd3d8; font-size:20px; letter-spacing:.14em; text-transform:uppercase; padding-bottom:18px; }
-    .row { background:#3a3a41; border-radius:6px; padding:18px 14px 8px; margin-bottom:22px;
-           box-shadow: inset 0 -14px 24px rgba(0,0,0,.35); display:flex; gap:14px; }
-    .bay { flex:1; display:flex; flex-direction:column; gap:8px; }
-    .stack { display:flex; gap:3px; height:150px; align-items:flex-end; }
-    .pack { flex:1; border-radius:2px 2px 0 0; height:100%; box-shadow: 2px 0 4px rgba(0,0,0,.3); }
-    .pack--0 { background:linear-gradient(180deg,#c8102e,#8e0b20); }
-    .pack--1 { background:linear-gradient(180deg,#1d4e89,#123258); }
-    .pack--2 { background:linear-gradient(180deg,#2e7d4f,#1d5033); }
-    .pack--3 { background:linear-gradient(180deg,#d8d8d8,#a8a8a8); }
-    .label { background:#f7f7f4; border-radius:3px; padding:6px 7px; min-height:56px; }
-    .desc { font-size:11px; color:#222; font-weight:700; letter-spacing:.02em; line-height:1.2; }
-    .price { font-size:22px; font-weight:800; color:#111; margin-top:3px; }
+    body { margin:0; font-family: Arial, Helvetica, sans-serif; background:#20232a; }
+    .frame { padding:26px 24px; }
+    .head { color:#c9ced6; font-size:15px; letter-spacing:.16em; text-transform:uppercase; }
+    .head b { display:block; color:#fff; font-size:22px; letter-spacing:.04em; margin-top:3px; }
+    .head i { font-style:normal; font-size:12px; color:#8f97a3; letter-spacing:.08em; }
+
+    .cabinet { background:#33373f; border-radius:5px; margin-top:16px; padding:16px 14px 10px;
+               box-shadow: inset 0 -18px 30px rgba(0,0,0,.4); display:flex; gap:9px; }
+    .pack { flex:1; height:190px; border-radius:3px 3px 0 0; background:#6d6552;
+            display:flex; flex-direction:column; justify-content:space-between;
+            box-shadow: 3px 0 6px rgba(0,0,0,.35); overflow:hidden; }
+    .warning { background:#141414; color:#fff; font-size:13px; font-weight:800; line-height:1.15;
+               padding:10px 6px; text-align:center; letter-spacing:.04em; flex:1;
+               display:flex; align-items:center; justify-content:center; }
+    .packname { background:#6d6552; color:#efeade; font-size:11px; font-weight:700; padding:6px;
+                text-align:center; letter-spacing:.03em; }
+    .packname span { display:block; font-weight:400; font-size:10px; opacity:.85; }
+
+    .board { background:#f7f6f1; border-radius:4px; margin-top:20px; padding:18px 22px 14px; }
+    .board h2 { margin:0 0 4px; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#333; }
+    .board .sub { font-size:11px; color:#777; margin-bottom:12px; letter-spacing:.05em; }
+    table { width:100%; border-collapse:collapse; }
+    td { padding:7px 0; font-size:19px; vertical-align:baseline; border-bottom:1px solid #e3e0d8; }
+    .brand { font-weight:700; color:#161616; letter-spacing:.02em; }
+    .brand span { font-weight:400; color:#5a5a5a; }
+    .dots { width:100%; }
+    .price { text-align:right; font-weight:800; color:#111; white-space:nowrap; font-size:22px; }
+    .foot { font-size:10px; color:#8a8a8a; margin-top:10px; letter-spacing:.04em; }
   </style>
-  <div class="shelf">
-    <div class="header">${title} — shelf reference photo</div>
-    <div class="row">${packs}</div>
-    <div class="row">${packs}</div>
-    <div class="row">${packs}</div>
+  <div class="frame">
+    <div class="head">Price capture
+      <b>${title}</b>
+      <i>${code} · Singapore · SGD</i>
+    </div>
+    <div class="cabinet">${packs}</div>
+    <div class="board">
+      <h2>Price list</h2>
+      <div class="sub">Per pack of 20 · inclusive of duty and GST</div>
+      <table>${list}</table>
+      <div class="foot">Illustrative demo image — not a real retailer price list.</div>
+    </div>
   </div>`;
 }

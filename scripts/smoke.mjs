@@ -65,7 +65,7 @@ try {
   await page.setViewportSize({ width: 414, height: 896 });
   await wait(200);
 
-  check((await page.locator('.topbar__title h1').textContent()).includes('Hello'), 'field home renders');
+  check((await page.locator('.topbar__title h1').textContent()).includes('TME'), 'field home renders');
   await shot('01-field-home');
 
   await page.locator('[data-nav="field/check"]:visible').first().click();

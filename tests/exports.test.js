@@ -50,7 +50,7 @@ test('observation export carries the rule snapshot, not the live rule', () => {
   const config = defaultConfig();
   const data = buildSeedData(NOW);
   const analytics = buildAnalytics(data, {}, config, NOW);
-  const strategic = analytics.observations.filter((o) => o.sku_id === 'sku-lm-rlxl');
+  const strategic = analytics.observations.filter((o) => o.sku_id === 'sku-jti-winston-red');
   const old = strategic.filter((o) => new Date(o.observed_at) < new Date('2026-07-25T00:00:00Z'));
 
   const rows = old.map((o) => ({
@@ -59,5 +59,5 @@ test('observation export carries the rule snapshot, not the live rule', () => {
   }));
   const parsed = parseCsv(toCsv(['observed_at', 'recommended_price_snapshot'], rows));
   assert.ok(parsed.length > 0);
-  assert.ok(parsed.every((r) => r.recommended_price_snapshot === '13.5'));
+  assert.ok(parsed.every((r) => r.recommended_price_snapshot === '13.4'));
 });

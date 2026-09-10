@@ -47,28 +47,28 @@ test('observations enrich into evaluated views with joined master data', () => {
 });
 
 test('historical integrity: a superseded rule still governs its own observations (§25)', () => {
-  // The Strategic SKU recommendation moved from 13.50 to 13.70 forty-five days ago.
-  const strategic = data.price_observations.filter((o) => o.sku_id === 'sku-lm-rlxl');
+  // The Strategic SKU recommendation moved from 13.40 to 13.60 forty-five days ago.
+  const strategic = data.price_observations.filter((o) => o.sku_id === 'sku-jti-winston-red');
   const old = strategic.filter((o) => new Date(o.observed_at) < new Date('2026-07-25T00:00:00Z'));
   const recent = strategic.filter((o) => new Date(o.observed_at) > new Date('2026-08-01T00:00:00Z'));
 
   assert.ok(old.length && recent.length, 'seed spans the rule change');
-  assert.ok(old.every((o) => o.recommended_price_snapshot === 13.5));
-  assert.ok(recent.every((o) => o.recommended_price_snapshot === 13.7));
-  assert.ok(old.every((o) => o.price_rule_id === 'pr-LM-RL-XL-mkt-prev'));
+  assert.ok(old.every((o) => o.recommended_price_snapshot === 13.4));
+  assert.ok(recent.every((o) => o.recommended_price_snapshot === 13.6));
+  assert.ok(old.every((o) => o.price_rule_id === 'pr-WIN-RED-mkt-prev'));
 });
 
 test('territory-specific rule overrides the market rule in the East', () => {
   const east = data.outlets.filter((o) => o.territory_id === 'ter-east').map((o) => o.id);
   const eastDf = data.price_observations.filter(
-    (o) => o.sku_id === 'sku-lm-dfxl' && east.includes(o.outlet_id),
+    (o) => o.sku_id === 'sku-jti-mevius-original' && east.includes(o.outlet_id),
   );
   const westDf = data.price_observations.filter(
-    (o) => o.sku_id === 'sku-lm-dfxl' && !east.includes(o.outlet_id),
+    (o) => o.sku_id === 'sku-jti-mevius-original' && !east.includes(o.outlet_id),
   );
   assert.ok(eastDf.length && westDf.length);
-  assert.ok(eastDf.every((o) => o.recommended_price_snapshot === 14.4));
-  assert.ok(westDf.every((o) => o.recommended_price_snapshot === 14.3));
+  assert.ok(eastDf.every((o) => o.recommended_price_snapshot === 14.5));
+  assert.ok(westDf.every((o) => o.recommended_price_snapshot === 14.4));
 });
 
 test('KPIs are computed over observations with a valid recommendation only', () => {
@@ -131,7 +131,7 @@ test('opportunities are derived, prioritised and never use compliance language',
 
 test('the scripted persistent strategic opportunity is detected in the East', () => {
   const opp = analytics.opportunities.find(
-    (o) => o.outlet_id === 'out-e1' && o.jti_sku_id === 'sku-lm-rlxl',
+    (o) => o.outlet_id === 'out-e1' && o.jti_sku_id === 'sku-jti-winston-red',
   );
   assert.ok(opp, 'Punggol Central Minimart strategic opportunity exists');
   assert.equal(opp.is_strategic, true);
@@ -142,8 +142,8 @@ test('the scripted persistent strategic opportunity is detected in the East', ()
 
 test('the scripted competitor price drop is detected as a material move', () => {
   const moves = detectCompetitorMoves(analytics.observations, data, config, NOW);
-  const move = moves.find((m) => m.competitor_sku_id === 'sku-ca-core');
-  assert.ok(move, 'Competitor A Core move detected');
+  const move = moves.find((m) => m.competitor_sku_id === 'sku-bat-pallmall-red');
+  assert.ok(move, 'Pall Mall Red move detected');
   assert.ok(move.change < 0, 'price decreased');
   assert.ok(Math.abs(move.change) >= config.competitor_move.min_abs_change);
   assert.ok(move.affected_jti_sku_ids.length > 0);
@@ -161,7 +161,7 @@ test('immaterial competitor noise is filtered out by the configured thresholds',
 test('price distribution reports percentiles, not just an average', () => {
   const dist = calculatePriceDistribution(
     analytics.observations.filter((o) => o.is_jti),
-    'sku-lm-rlxl',
+    'sku-jti-winston-red',
   );
   assert.ok(dist);
   assert.ok(dist.stats.count > 10);
@@ -206,7 +206,7 @@ test('ladder views can be restricted to own brand or competitors', () => {
 
 test('time series groups medians by period in chronological order', () => {
   const series = buildTimeSeries(
-    analytics.observations.filter((o) => o.sku_id === 'sku-lm-rlxl' || o.sku_id === 'sku-ca-value'),
+    analytics.observations.filter((o) => o.sku_id === 'sku-jti-winston-red' || o.sku_id === 'sku-pmi-lm-red'),
     'week',
   );
   assert.ok(series.length > 3);
@@ -227,7 +227,7 @@ test('field effectiveness reports observed sequence without claiming causality',
 
 test('the scripted engagement shows a later observed price improvement', () => {
   const entry = analytics.fieldEffectiveness.timeline.find(
-    (t) => t.outlet_id === 'out-n1' && t.sku_id === 'sku-lm-rlxl',
+    (t) => t.outlet_id === 'out-n1' && t.sku_id === 'sku-jti-winston-red',
   );
   assert.ok(entry, 'Yishun Mini Mart engagement is in the timeline');
   assert.equal(entry.before.jti_price, 14.5);

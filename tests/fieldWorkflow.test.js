@@ -124,13 +124,13 @@ test('manual correction stores both the detection and the confirmed value (§8.7
 
 test('correcting the SKU re-resolves the rule and mapping snapshots', async () => {
   const result = await drafts();
-  const target = result.find((d) => d.is_jti && d.sku_id !== 'sku-lm-dfxl');
-  const corrected = correctDraft(target, { sku_id: 'sku-lm-dfxl' }, data, config, NOW);
-  assert.equal(corrected.sku_id, 'sku-lm-dfxl');
+  const target = result.find((d) => d.is_jti && d.sku_id !== 'sku-jti-mevius-original');
+  const corrected = correctDraft(target, { sku_id: 'sku-jti-mevius-original' }, data, config, NOW);
+  assert.equal(corrected.sku_id, 'sku-jti-mevius-original');
   assert.equal(corrected.detected_sku_id, target.detected_sku_id, 'original detection preserved');
   assert.equal(corrected.manual_correction, true);
-  // Punggol is in the East, where the territory override sets 14.40.
-  assert.equal(corrected.recommended_price_snapshot, 14.4);
+  // Punggol is in the East, where the territory override sets 14.50.
+  assert.equal(corrected.recommended_price_snapshot, 14.5);
 });
 
 test('a correction changes the evaluation after recompute', async () => {
