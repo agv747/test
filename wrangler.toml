@@ -1,7 +1,7 @@
-# Deploys over the existing `tic-tac-toe` Worker so the already-shared
-# tic-tac-toe.<subdomain>.workers.dev URL keeps working and now serves this app.
-# The tic-tac-toe source remains in git history at commit b250603.
-name = "tic-tac-toe"
+# Must match the deployed Worker, otherwise `wrangler deploy` creates a second copy
+# of the app instead of updating the live one.
+# Live at: https://price-check.anton-grebelny.workers.dev
+name = "price-check"
 compatibility_date = "2024-09-23"
 main = "worker.js"
 
