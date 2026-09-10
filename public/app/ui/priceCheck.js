@@ -33,6 +33,7 @@ import {
   MARKET_CONTEXT_NOTE,
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
+import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
 
 export const narrow = true;
 
@@ -216,12 +217,15 @@ function renderAcquireStep(ctx) {
       <input type="file" id="gallery-input" accept="image/*,.heic,.heif" multiple class="hidden" />
 
       ${state.images.length ? renderThumbs() : '<p class="small muted mt">No images added yet. You can add more than one image to a visit.</p>'}
-      <p class="xsmall muted mt">
-        No shelf photo on this device? Sample images:
-        <a href="/demo-images/shelf-punggol-central.jpg" download>Punggol</a> ·
-        <a href="/demo-images/shelf-yishun-mini-mart.jpg" download>Yishun</a> ·
-        <a href="/demo-images/shelf-jurong-west.jpg" download>Jurong West</a>
-      </p>
+      <div class="mt">
+        <span class="xsmall muted">No shelf photo on this device? Load a sample:</span>
+        <div class="toolbar" style="margin-top:5px">
+          ${DEMO_IMAGES.map(
+            (s, i) =>
+              `<button class="btn btn--sm" data-action="use-sample" data-sample="${i}">🖼 ${esc(s.label)}</button>`,
+          ).join('')}
+        </div>
+      </div>
     </div>
 
     ${state.images.some((i) => !i.quality.usable) ? qualityWarning() : ''}
@@ -576,6 +580,14 @@ export function onAction(action, el, ctx) {
       break;
     case 'choose-gallery':
       document.querySelector('#gallery-input')?.click();
+      break;
+    case 'use-sample':
+      loadSampleImage(Number(el.dataset.sample))
+        .then((file) => handleFiles([file], 'gallery', ctx))
+        .catch((err) => {
+          state.error = `Could not load the sample image: ${err.message}`;
+          ctx.render();
+        });
       break;
     case 'remove-image':
       state.images = state.images.filter((i) => i.id !== el.dataset.image);

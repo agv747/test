@@ -69,11 +69,33 @@ export function parseCsv(text) {
   });
 }
 
-/** Browser-only: trigger a CSV download. Guarded so the module stays importable in Node. */
-export function downloadCsv(filename, columns, rows) {
+/**
+ * Browser-only: hand a CSV to the user. Guarded so the module stays importable in Node.
+ *
+ * Two delivery paths, because not every host lets a page start its own download:
+ *  - a sandboxed host (the claude.ai artifact viewer) mediates saves through the
+ *    `downloads` capability, where the viewer confirms the file;
+ *  - everywhere else — including the Cloudflare Worker deployment — `claude.use` does not
+ *    exist, and the ordinary anchor download runs.
+ */
+export async function downloadCsv(filename, columns, rows) {
   const csv = toCsv(columns, rows);
   if (typeof document === 'undefined') return csv;
-  const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const withBom = `﻿${csv}`;
+
+  try {
+    const downloads = await globalThis.claude?.use?.('downloads');
+    if (downloads) {
+      await downloads.save({ filename, data: withBom });
+      return csv;
+    }
+  } catch (err) {
+    // The viewer declining is a normal outcome, not a failure to work around.
+    if (err?.code === 'declined') return csv;
+    console.warn('Host-mediated save unavailable, falling back to a direct download', err);
+  }
+
+  const blob = new Blob([withBom], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

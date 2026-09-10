@@ -1,4 +1,7 @@
-name = "retail-price-intelligence-sg"
+# Deploys over the existing `tic-tac-toe` Worker so the already-shared
+# tic-tac-toe.<subdomain>.workers.dev URL keeps working and now serves this app.
+# The tic-tac-toe source remains in git history at commit b250603.
+name = "tic-tac-toe"
 compatibility_date = "2024-09-23"
 main = "worker.js"
 

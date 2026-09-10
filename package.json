@@ -14,6 +14,7 @@
     "demo-images": "node scripts/make-demo-images.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "wrangler": "^4.0.0"
   }
