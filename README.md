@@ -329,6 +329,46 @@ npm run dev:local    # wrangler.local.toml — assets + local D1, fully offline
 Under `dev:local`, `/api/recognise` returns 503 and the simulator is used. Keep the bindings
 in the two files in step.
 
+## Shelf overlay — recognition results drawn on the photo
+
+Step 3 of a price check offers two views of the same detections, and the working list stays
+the default:
+
+- **List** — the cards a TME confirms and submits. Works with no image on the device.
+- **Shelf overlay** — the captured photo with a marker per detection carrying the price, the
+  SKU and the recognition percentage. Tapping a marker opens that detection for correction.
+  A full-screen button removes the surrounding chrome.
+
+This is an annotated still, not live camera passthrough. A vision model answers in seconds,
+not in frames, so a continuously updating overlay would either lag far behind the camera or
+cost one model call per frame; freezing the frame is also what the task needs, since prices
+are read once per visit and then corrected.
+
+**Where the rectangles come from is always stated on screen**, because a rectangle on a
+photograph reads as evidence:
+
+| Source | Meaning |
+|---|---|
+| `model` | The model reported coordinates — the rectangle is where it says it looked. |
+| `inferred` | It reported none, so lines are laid out in the order it read them, top to bottom. Approximate. |
+| `simulated` | The MVP Simulator invented both the prices and the rectangles. |
+
+Most vision models return no coordinates when reading a printed price list, so `inferred` is
+the common case. The prompt asks for an optional `box` and says to omit it when unsure; a box
+that does not describe a positive area is dropped rather than drawn over the wrong line.
+Measured and inferred geometry are never mixed in one picture.
+
+### The recognition percentage
+
+The percentage beside a detection is the model's own certainty that it read **both the
+product name and the price** correctly. It says nothing about whether the price is
+commercially good or bad. It is never rendered as a bare number next to a price-position
+pill, where it read as one more business figure — it carries the word *Recognition*, a plain
+word (*read clearly* / *read with doubt* / *needs confirming*) so the reading never depends on
+colour, and the explanation sits on the same screen. Below
+`config.confidence_review_threshold` (0.75) the detection is marked **Review Required** and
+does not drive a price-position judgement until it is confirmed.
+
 ## Replacing the recognition simulator
 
 ```js
@@ -347,6 +387,8 @@ registerProvider({
       sku_candidate: item.skuId,
       price_candidate: item.price,
       confidence: item.confidence,
+      // {x, y, w, h} as fractions of the image, plus source: 'model'. Omit it and the
+      // shelf overlay lays the detections out in reading order, labelled approximate.
       bounding_box: item.box,
       alternatives: item.alternatives,
     }));
@@ -371,7 +413,9 @@ and the services are untouched.
 - Recognition is simulated. It is deterministic per image, so demos are reproducible, but it
   does not read pixels.
 - Images are previewed from an object URL and are not uploaded or persisted; only their
-  metadata (name, source, quality status) is stored.
+  metadata (name, source, quality status) is stored. The shelf overlay therefore works during
+  the visit, on the device that took the photo, and Image Review shows a detection's region as
+  geometry without the photograph behind it.
 - Persistence is per-browser `localStorage`, so data is not shared between devices.
 - Opportunity lifecycle state is stored separately from the derived opportunity, keyed by
   outlet + SKU.

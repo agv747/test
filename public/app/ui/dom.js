@@ -1,7 +1,7 @@
 /** Small DOM/rendering helpers. Pages return HTML strings; behaviour is bound by delegation. */
 
 import { esc, money, num, pct, priceIndex, dateLabel, signedMoney } from '../lib/format.js';
-import { PRICE_POSITION_STATUS } from '../config.js';
+import { DEFAULT_CONFIG, PRICE_POSITION_STATUS } from '../config.js';
 
 export { esc, money, num, pct, priceIndex, dateLabel, signedMoney };
 
@@ -53,13 +53,57 @@ export function freshnessLabelHtml(freshness) {
   }</span>`;
 }
 
-export function confidenceBar(confidence) {
+/**
+ * What the recognition percentage means, in one sentence.
+ *
+ * The number is the model's own certainty that it read BOTH the product name and the price
+ * correctly. Shown bare next to a commercial status pill it read as a share of something —
+ * so it is never rendered without this explanation within reach.
+ */
+export const CONFIDENCE_NOTE =
+  'Recognition % is how certain the model is that it read both the product name and the price correctly. ' +
+  'It says nothing about whether the price itself is good or bad.';
+
+export function confidenceTone(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
+  if (confidence === null || confidence === undefined) return 'none';
+  if (confidence >= 0.9) return 'good';
+  return confidence >= threshold ? 'watch' : 'risk';
+}
+
+/** A word beside the number, so the reading never depends on colour. */
+export function confidenceWord(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
+  const tone = confidenceTone(confidence, threshold);
+  if (tone === 'none') return 'not recognised';
+  if (tone === 'good') return 'read clearly';
+  return tone === 'watch' ? 'read with doubt' : 'needs confirming';
+}
+
+/** Bar plus percentage, for tables whose column heading already says what it is. */
+export function confidenceBar(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
   if (confidence === null || confidence === undefined) return '<span class="muted">—</span>';
   const pctValue = Math.round(confidence * 100);
-  const color = confidence >= 0.9 ? 'var(--good)' : confidence >= 0.75 ? 'var(--watch)' : 'var(--risk)';
-  return `<span class="row" style="gap:6px">
-    <span class="confbar"><span class="confbar__fill" style="width:${pctValue}%;background:${color}"></span></span>
+  const tone = confidenceTone(confidence, threshold);
+  return `<span class="row" style="gap:6px" title="${esc(CONFIDENCE_NOTE)}">
+    <span class="confbar"><span class="confbar__fill confbar__fill--${tone}" style="width:${pctValue}%"></span></span>
     <span class="xsmall mono">${pctValue}%</span>
+  </span>`;
+}
+
+/**
+ * The self-explanatory form, for cards where the percentage stands next to a price position
+ * pill and would otherwise be mistaken for one more commercial figure.
+ */
+export function confidenceMeter(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
+  if (confidence === null || confidence === undefined) {
+    return '<span class="conf conf--none">Recognition — <span class="conf__word">not recognised</span></span>';
+  }
+  const pctValue = Math.round(confidence * 100);
+  const tone = confidenceTone(confidence, threshold);
+  return `<span class="conf conf--${tone}" title="${esc(CONFIDENCE_NOTE)}">
+    <span class="conf__label">Recognition</span>
+    <span class="confbar"><span class="confbar__fill confbar__fill--${tone}" style="width:${pctValue}%"></span></span>
+    <span class="conf__pct">${pctValue}%</span>
+    <span class="conf__word">${esc(confidenceWord(confidence, threshold))}</span>
   </span>`;
 }
 

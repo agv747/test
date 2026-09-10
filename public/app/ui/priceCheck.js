@@ -20,7 +20,9 @@ import {
 import { FIELD_ACTION_TYPES, FIELD_RECOMMENDATIONS, PRICE_POSITION_STATUS } from '../config.js';
 import { COMPETITIVE_BUCKET, RANGE_BUCKET } from '../services/pricePositionService.js';
 import {
+  CONFIDENCE_NOTE,
   confidenceBar,
+  confidenceMeter,
   esc,
   gapCell,
   indexCell,
@@ -34,6 +36,7 @@ import {
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
 import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
+import { BOX_SOURCE_LABEL, shelfOverlay } from './shelfOverlay.js';
 
 export const narrow = true;
 
@@ -48,6 +51,12 @@ const state = {
   drafts: [],
   processingStep: 0,
   expanded: new Set(),
+  /** Results view: the working list, or the photo with detections drawn on it. */
+  resultsView: 'list',
+  overlayImageId: null,
+  overlayFullscreen: false,
+  /** Set when a marker is tapped, so mount() can scroll that card into view once. */
+  focusDraftId: null,
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
   error: null,
 };
@@ -61,6 +70,10 @@ export function reset() {
   state.drafts = [];
   state.processingStep = 0;
   state.expanded = new Set();
+  state.resultsView = 'list';
+  state.overlayImageId = null;
+  state.overlayFullscreen = false;
+  state.focusDraftId = null;
   state.action = { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] };
   state.error = null;
 }
@@ -291,13 +304,22 @@ function renderResultsStep(ctx) {
   const jti = state.drafts.filter((d) => d.is_jti);
   const competitor = state.drafts.filter((d) => !d.is_jti);
 
+  if (state.resultsView === 'overlay' && state.overlayFullscreen) {
+    return renderOverlayCard(ctx, { fullscreen: true });
+  }
+
   return `
     ${decisionCard(jti)}
+    ${viewSwitch()}
+    ${state.resultsView === 'overlay' ? renderOverlayCard(ctx) : ''}
     <div class="card">
       <div class="card__head">
         <h2>Detected JTI SKUs</h2>
         <span class="card__sub">${jti.length} detection${jti.length === 1 ? '' : 's'} · tap a card to correct</span>
       </div>
+      <p class="xsmall muted" style="margin:0 0 8px">${esc(CONFIDENCE_NOTE)}
+        Below ${Math.round(ctx.config.confidence_review_threshold * 100)}% a detection is marked
+        <strong>Review Required</strong> and never drives a price-position judgement until it is confirmed.</p>
       ${jti.map((d) => detectionCard(d, ctx)).join('') || '<div class="empty">No JTI SKUs detected.</div>'}
     </div>
     <div class="card">
@@ -312,6 +334,62 @@ function renderResultsStep(ctx) {
       <div class="spacer"></div>
       <button class="btn btn--primary" data-action="to-action">Record field action →</button>
     </div>`;
+}
+
+/**
+ * The results can be read as a working list or seen on the photo. The list stays the
+ * default: it is what the TME confirms and submits, and it works when the image is no
+ * longer on the device.
+ */
+function viewSwitch() {
+  const available = state.images.some((i) => i.previewUrl);
+  if (!available) return '';
+  const btn = (view, label) =>
+    `<button class="btn btn--sm${state.resultsView === view ? ' btn--primary' : ''}"
+      data-action="set-results-view" data-view="${view}"
+      aria-pressed="${state.resultsView === view}">${label}</button>`;
+  return `<div class="toolbar" style="margin-bottom:10px">
+    ${btn('list', '☰ List')}
+    ${btn('overlay', '⛶ Shelf overlay')}
+    <span class="xsmall muted">See each price where it was read on the photo</span>
+  </div>`;
+}
+
+function overlayImage() {
+  const usable = state.images.filter((i) => i.previewUrl);
+  return usable.find((i) => i.id === state.overlayImageId) ?? usable[0] ?? null;
+}
+
+function renderOverlayCard(ctx, { fullscreen = false } = {}) {
+  const image = overlayImage();
+  if (!image) return '';
+  const drafts = state.drafts.filter((d) => d.image_id === image.id);
+  const usable = state.images.filter((i) => i.previewUrl);
+  const overlay = shelfOverlay(image, drafts, {
+    threshold: ctx.config.confidence_review_threshold,
+    fullscreen,
+  });
+
+  if (fullscreen) return overlay;
+
+  return `<div class="card">
+    <div class="card__head">
+      <h2>Shelf overlay</h2>
+      <span class="card__sub">${drafts.length} detection${drafts.length === 1 ? '' : 's'} on this image · tap a marker to correct it</span>
+    </div>
+    ${
+      usable.length > 1
+        ? `<div class="toolbar" style="margin-bottom:8px">${usable
+            .map(
+              (i, idx) =>
+                `<button class="btn btn--sm${i.id === image.id ? ' btn--primary' : ''}"
+                  data-action="set-overlay-image" data-image="${esc(i.id)}">Image ${idx + 1}</button>`,
+            )
+            .join('')}</div>`
+        : ''
+    }
+    ${overlay}
+  </div>`;
 }
 
 /** §8.10 — the single decision card the TME acts on. */
@@ -366,7 +444,7 @@ function detectionCard(draft, ctx) {
     )
     .join('');
 
-  return `<div class="detection detection--${tone}">
+  return `<div class="detection detection--${tone}" id="draft-${esc(draft.draft_id)}">
     <div class="detection__head" data-action="toggle-detection" data-draft="${esc(draft.draft_id)}">
       <div class="detection__body">
         <div class="detection__name">${esc(draft.sku?.name ?? 'Unrecognised item')}
@@ -376,7 +454,9 @@ function detectionCard(draft, ctx) {
           · ${esc(draft.raw_text ?? '')}</div>
         <div class="row" style="margin-top:4px">
           ${draft.is_jti ? statusPill(draft.evaluation?.status) : '<span class="pill pill--none">Competitor observation</span>'}
-          ${confidenceBar(draft.recognition_confidence)}
+        </div>
+        <div class="row" style="margin-top:4px">
+          ${confidenceMeter(draft.recognition_confidence, ctx.config.confidence_review_threshold)}
         </div>
       </div>
       <div style="text-align:right">
@@ -428,6 +508,7 @@ function detectionDetail(draft, skuOptions) {
   rows.push(['Recognition confidence', confidenceBar(draft.recognition_confidence)]);
   rows.push(['Image source', esc(draft.image_source === 'camera' ? 'Camera' : 'Gallery')]);
   rows.push(['Recognition provider', esc(draft.recognition_provider ?? '—')]);
+  rows.push(['Position on image', esc(BOX_SOURCE_LABEL[draft.bounding_box?.source ?? 'none'])]);
 
   return `<div class="detection__detail">
     <div class="form-grid mb">
@@ -561,6 +642,13 @@ export function mount(ctx, root) {
     search.focus();
     search.setSelectionRange(search.value.length, search.value.length);
   }
+
+  if (state.focusDraftId) {
+    // Draft ids contain a colon, so match on the attribute rather than as an id selector.
+    const card = root.querySelector(`[id="draft-${state.focusDraftId}"]`);
+    state.focusDraftId = null;
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 export function onAction(action, el, ctx) {
@@ -604,6 +692,28 @@ export function onAction(action, el, ctx) {
       const id = el.dataset.draft;
       if (state.expanded.has(id)) state.expanded.delete(id);
       else state.expanded.add(id);
+      ctx.render();
+      break;
+    }
+    case 'set-results-view':
+      state.resultsView = el.dataset.view;
+      state.overlayFullscreen = false;
+      ctx.render();
+      break;
+    case 'set-overlay-image':
+      state.overlayImageId = el.dataset.image;
+      ctx.render();
+      break;
+    case 'toggle-overlay-fullscreen':
+      state.overlayFullscreen = !state.overlayFullscreen;
+      ctx.render();
+      break;
+    case 'focus-detection': {
+      // A marker is a way into the correction form, so open the card and go to it.
+      const id = el.dataset.draft;
+      state.expanded.add(id);
+      state.overlayFullscreen = false;
+      state.focusDraftId = id;
       ctx.render();
       break;
     }

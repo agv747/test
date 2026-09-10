@@ -488,8 +488,144 @@ textarea { min-height: 74px; resize: vertical; }
 .detection__row dt { color: var(--text-muted); }
 .detection__row dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
 
-.confbar { height: 4px; border-radius: 3px; background: var(--border); overflow: hidden; width: 56px; }
+.confbar { height: 4px; border-radius: 3px; background: var(--border); overflow: hidden; width: 56px; flex: none; }
 .confbar__fill { height: 100%; }
+.confbar__fill--good { background: var(--good); }
+.confbar__fill--watch { background: var(--watch); }
+.confbar__fill--risk { background: var(--risk); }
+.confbar__fill--none { background: var(--none); }
+
+/* The self-explanatory confidence readout: a word and a label, never a bare percentage
+   sitting next to a commercial status pill where it reads as one more business figure. */
+.conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px 2px 8px;
+  background: var(--surface-2);
+}
+.conf__label { font-weight: 600; color: var(--text-muted); }
+.conf__pct { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
+.conf__word { font-style: italic; }
+.conf--good { border-color: var(--good-border); background: var(--good-bg); }
+.conf--good .conf__pct { color: var(--good); }
+.conf--watch { border-color: var(--watch-border); background: var(--watch-bg); }
+.conf--watch .conf__pct { color: var(--watch); }
+.conf--risk { border-color: var(--risk-border); background: var(--risk-bg); }
+.conf--risk .conf__pct { color: var(--risk); }
+
+/* ---------------------------------------------------------------- shelf overlay */
+
+.ar { position: relative; }
+.ar__frame { position: relative; display: inline-block; width: 100%; line-height: 0; }
+.ar__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.ar__layer { position: absolute; inset: 0; }
+
+.ar__box {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--none);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  min-height: 20px;
+  display: block;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.ar__box--good { border-color: var(--good); }
+.ar__box--watch { border-color: var(--watch); }
+.ar__box--risk { border-color: var(--risk); }
+.ar__box--excluded { opacity: 0.4; border-style: dashed; }
+.ar__box:focus-visible { outline: 3px solid var(--info); outline-offset: 2px; }
+
+/* The tag is sized by its own content, not by the rectangle: a narrow box would otherwise
+   ellipsise the SKU name down to one letter, which is the one thing the marker must say.
+   It may therefore overhang its box — an annotation, not a crop. */
+.ar__tag {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 84px;
+  max-width: max(84px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.2;
+  font-size: 0.66rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(12, 15, 20, 0.84);
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ar__line { display: flex; align-items: baseline; gap: 6px; }
+.ar__price { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ar__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.62rem;
+  opacity: 0.92;
+}
+.ar__conf { font-variant-numeric: tabular-nums; font-size: 0.62rem; }
+/* A tapped or focused marker brings its own tag clear of its neighbours. */
+.ar__box:hover, .ar__box:focus-visible { z-index: 2; }
+.ar__box--good .ar__conf { color: #86e0ac; }
+.ar__box--watch .ar__conf { color: #f4c97a; }
+.ar__box--risk .ar__conf { color: #f6a49e; }
+
+/* Top right: marker tags hang off the left edge of their box, so the right side is the
+   only corner that is reliably clear of them. */
+.ar__expand {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 3;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(12, 15, 20, 0.78);
+  color: #fff;
+  font-size: 0.72rem;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ar__legend { margin-top: 10px; }
+.ar__keys { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.7rem; margin-bottom: 6px; }
+.ar__key--good { color: var(--good); }
+.ar__key--watch { color: var(--watch); }
+.ar__key--risk { color: var(--risk); }
+.ar__legend p { margin: 3px 0 0; }
+
+/* Full screen is a fixed layer rather than the Fullscreen API, which iOS Safari does not
+   grant to anything but a <video>. */
+.ar--full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #0b0d11;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+}
+.ar--full .ar__frame { width: auto; max-width: 100%; max-height: 100%; }
+.ar--full .ar__img { max-height: calc(100vh - 12px); max-width: 100%; width: auto; border-radius: 0; }
 
 .decision {
   border-radius: var(--radius);

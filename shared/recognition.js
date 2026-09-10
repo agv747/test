@@ -29,9 +29,13 @@ Rules:
 - If a line is readable but matches nothing in the list, still report it with the text you read.
 - Do not invent products you cannot see. Do not guess a price you cannot read.
 - confidence is your own 0-1 estimate of how certain you are of BOTH the product and the price.
+- Report the lines in the order they appear in the image, top to bottom.
+- "box" is OPTIONAL: [x0, y0, x1, y1] locating the line, as fractions of image width and
+  height between 0 and 1. Include it only if you can genuinely locate the line. Omit it
+  when you cannot — a box drawn over the wrong line is worse than no box at all.
 
 Respond with JSON only, no commentary, in exactly this shape:
-{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60"}]}`;
+{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60","box":[0.05,0.21,0.95,0.28]}]}`;
 }
 
 /* -------------------------------------------------------------- model input */
@@ -179,6 +183,91 @@ function clamp01(value) {
   return Math.min(1, Math.max(0, value));
 }
 
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+/* --------------------------------------------------------- detection geometry */
+
+/**
+ * Reads the optional location a model reports for a detection, as `{x, y, w, h}` in
+ * fractions of the image with `source: 'model'`.
+ *
+ * Two shapes are accepted, `[x0, y0, x1, y1]` and `{x, y, w, h}`, because models disagree.
+ * They also disagree on scale: a model trained on a 0–1000 grid reports integers, so a box
+ * outside the unit square is rescaled rather than thrown away. Anything that still fails to
+ * describe a positive area is dropped — a rectangle over the wrong line is worse than no
+ * rectangle, because it invites the TME to confirm a price they never actually checked.
+ */
+export function parseBox(value) {
+  let x0;
+  let y0;
+  let x1;
+  let y1;
+
+  if (Array.isArray(value) && value.length === 4) {
+    [x0, y0, x1, y1] = value.map(Number);
+  } else if (value && typeof value === 'object') {
+    const x = Number(value.x);
+    const y = Number(value.y);
+    const w = Number(value.w ?? value.width);
+    const h = Number(value.h ?? value.height);
+    x0 = x;
+    y0 = y;
+    x1 = x + w;
+    y1 = y + h;
+  } else {
+    return null;
+  }
+
+  const corners = [x0, y0, x1, y1];
+  if (!corners.every((n) => Number.isFinite(n))) return null;
+
+  // 0–1 fractions, 0–100 percentages and the 0–1000 grid all appear in the wild.
+  const extent = Math.max(...corners.map(Math.abs));
+  const scale = extent <= 1.5 ? 1 : extent <= 100 ? 100 : 1000;
+  [x0, y0, x1, y1] = corners.map((n) => clamp01(n / scale));
+
+  const x = Math.min(x0, x1);
+  const y = Math.min(y0, y1);
+  const w = Math.max(x0, x1) - x;
+  const h = Math.max(y0, y1) - y;
+  if (w < 0.02 || h < 0.01) return null;
+
+  return { x: round3(x), y: round3(y), w: round3(w), h: round3(h), source: 'model' };
+}
+
+/**
+ * Lays detections out as horizontal bands in the order the model read them, so a photo can
+ * still be annotated when the model reports no coordinates — which is most of the time, and
+ * always for a price list read as text.
+ *
+ * The result is explicitly marked `source: 'inferred'` and every screen that draws it says
+ * the positions are approximate. It holds because a Singapore price list is a single column
+ * read top to bottom; it does not hold for packs spread across a cabinet, which is why the
+ * label matters.
+ *
+ * Detections are left untouched if the model located even one of them, rather than mixing
+ * measured and invented geometry in one picture.
+ */
+export function inferBoxes(detections) {
+  const rows = detections ?? [];
+  if (!rows.length || rows.some((d) => d.bounding_box)) return rows;
+
+  const band = 1 / rows.length;
+  const gap = Math.min(0.012, band * 0.18);
+  return rows.map((row, i) => ({
+    ...row,
+    bounding_box: {
+      x: 0.03,
+      y: round3(i * band + gap),
+      w: 0.94,
+      h: round3(band - gap * 2),
+      source: 'inferred',
+    },
+  }));
+}
+
 /**
  * Converts a model response into the detection shape the application already consumes.
  *
@@ -220,12 +309,12 @@ export function parseModelResponse(text, skus, options = {}) {
       sku_candidate: match?.sku.id ?? null,
       price_candidate: price,
       confidence: round2(confidence),
-      bounding_box: null,
+      bounding_box: parseBox(row?.box ?? row?.bbox ?? row?.bounding_box),
       alternatives: [],
       detected_is_jti: match ? Boolean(match.sku.is_jti) : null,
       match_score: match ? round2(match.score) : null,
     });
   }
 
-  return { detections, unmatched };
+  return { detections: inferBoxes(detections), unmatched };
 }

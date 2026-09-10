@@ -1,7 +1,16 @@
 /** §22 — Image Review queue for low-confidence recognition. */
 
 import { dateTimeLabel, esc, money } from '../lib/format.js';
-import { confidenceBar, dataTable, disclaimer, selectField, statusPill } from './dom.js';
+import {
+  CONFIDENCE_NOTE,
+  confidenceBar,
+  confidenceMeter,
+  dataTable,
+  disclaimer,
+  selectField,
+  statusPill,
+} from './dom.js';
+import { BOX_SOURCE_LABEL } from './shelfOverlay.js';
 
 let selectedId = null;
 let showResolved = false;
@@ -36,7 +45,7 @@ export function render(ctx) {
   ];
 
   return `
-    ${disclaimer('Low recognition confidence produces a <strong>Review Required</strong> status rather than a price-position judgement, so uncertain data never drives a commercial conclusion.')}
+    ${disclaimer(`${esc(CONFIDENCE_NOTE)} Low recognition confidence produces a <strong>Review Required</strong> status rather than a price-position judgement, so uncertain data never drives a commercial conclusion.`)}
     <div class="card">
       <div class="card__head">
         <h2>${rows.length} item${rows.length === 1 ? '' : 's'} in the queue</h2>
@@ -72,10 +81,13 @@ function reviewPanel(ctx, o) {
                   <rect x="${box.x * 100}" y="${box.y * 100}" width="${box.w * 100}" height="${box.h * 100}"
                     fill="none" stroke="var(--accent)" stroke-width="1.5"></rect>
                   <text x="${box.x * 100 + 1}" y="${box.y * 100 - 1}" font-size="4" fill="var(--accent)">detected region</text>
-                </svg>`
-              : '<p class="xsmall muted mt">No bounding box supplied by the recognition provider.</p>'
+                </svg>
+                <div class="xsmall muted">Position: ${esc(BOX_SOURCE_LABEL[box.source ?? 'none'])}</div>`
+              : '<p class="xsmall muted mt">No position supplied by the recognition provider.</p>'
           }
-          <p class="xsmall muted">The MVP simulator does not store the original file. A production provider returns the stored image and crop.</p>
+          <p class="xsmall muted">Images are not uploaded, so the region is shown as geometry
+            without the photograph. The TME sees the same detections drawn on the real photo
+            during the visit, in the shelf overlay.</p>
         </div>
       </div>
       <div>
@@ -85,7 +97,7 @@ function reviewPanel(ctx, o) {
           <div class="detection__row"><dt>Detected SKU</dt><dd>${esc(o.sku_name)}</dd></div>
           <div class="detection__row"><dt>Detected price</dt><dd>${money(o.detected_price)}</dd></div>
           <div class="detection__row"><dt>Confirmed price</dt><dd>${money(o.confirmed_price)}</dd></div>
-          <div class="detection__row"><dt>Confidence</dt><dd>${confidenceBar(o.recognition_confidence)}</dd></div>
+          <div class="detection__row"><dt>Recognition</dt><dd>${confidenceMeter(o.recognition_confidence, ctx.config.confidence_review_threshold)}</dd></div>
           <div class="detection__row"><dt>Manual correction in field</dt><dd>${o.manual_correction ? 'Yes' : 'No'}</dd></div>
           <div class="detection__row"><dt>Visit</dt><dd class="mono xsmall">${esc(o.visit_id)}</dd></div>
         </dl>

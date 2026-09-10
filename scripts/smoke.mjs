@@ -146,8 +146,51 @@ try {
   check(pills.some((p) => /Review Required/.test(p)), 'low-confidence detection is flagged Review Required');
   check(pills.some((p) => /Competitive Position At Risk|Recommended Range/.test(p)), 'price position statuses are shown');
   check((await page.locator('.confbar').count()) > 0, 'recognition confidence is visible');
+  const confText = await page.locator('.conf').first().innerText();
+  check(/Recognition/.test(confText), 'the confidence percentage says what it measures');
+  check(/read clearly|read with doubt|needs confirming/.test(confText), 'confidence is readable without colour');
   check((await page.locator('.decision__value').textContent()).length > 0, 'immediate field recommendation is shown');
   await shot('05-results');
+
+  /* ------------------------------------------------- shelf overlay (AR view) */
+
+  check((await page.locator('.ar').count()) === 0, 'the working list is the default view');
+  await page.click('[data-action="set-results-view"][data-view="overlay"]');
+  await wait(400);
+  check((await page.locator('.ar__img').count()) === 1, 'the captured photo is shown in the overlay');
+  const markers = await page.locator('.ar__box').count();
+  check(markers >= 4, `${markers} detections are marked on the photo`);
+  const firstMarker = await page.locator('.ar__box').first().innerText();
+  check(/\d+\.\d\d/.test(firstMarker), 'a marker shows the price');
+  check(/\d+%/.test(firstMarker), 'a marker shows the recognition percentage');
+  const legend = await page.locator('.ar__legend').innerText();
+  check(/read both the product name and the price/.test(legend), 'the overlay explains the percentage');
+  check(
+    /Simulated positions|Approximate positions|Positions reported by/.test(legend),
+    'the overlay states where the rectangles came from',
+  );
+  await shot('05b-shelf-overlay');
+
+  // A marker is the way into the correction form for that detection.
+  const markerDraft = await page.locator('.ar__box').first().getAttribute('data-draft');
+  await page.locator('.ar__box').first().click();
+  await wait(400);
+  check(
+    (await page.locator(`[id="draft-${markerDraft}"] .detection__detail`).count()) === 1,
+    'tapping a marker opens that detection for correction',
+  );
+
+  await page.click('[data-action="toggle-overlay-fullscreen"]');
+  await wait(350);
+  check((await page.locator('.ar--full').count()) === 1, 'the overlay opens full screen');
+  await shot('05c-shelf-overlay-fullscreen');
+  await page.click('[data-action="toggle-overlay-fullscreen"]');
+  await wait(300);
+  check((await page.locator('.ar--full').count()) === 0, 'full screen can be left again');
+
+  await page.click('[data-action="set-results-view"][data-view="list"]');
+  await wait(300);
+  check((await page.locator('.ar').count()) === 0, 'the overlay can be switched back off');
 
   await page.locator('.detection__head').first().click();
   await wait(250);
