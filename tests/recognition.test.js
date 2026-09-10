@@ -1,0 +1,163 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  buildPrompt,
+  extractJson,
+  matchSku,
+  normalise,
+  parseModelResponse,
+  parsePrice,
+} from '../shared/recognition.js';
+
+const SKUS = [
+  { id: 'sku-jti-winston-red', name: 'Winston Red', brand_name: 'Winston', sku_code: 'WIN-RED', is_jti: true },
+  { id: 'sku-jti-winston-blue', name: 'Winston Blue', brand_name: 'Winston', sku_code: 'WIN-BLU', is_jti: true },
+  { id: 'sku-jti-mevius-original', name: 'Mevius Original', brand_name: 'Mevius', sku_code: 'MEV-ORG', is_jti: true },
+  { id: 'sku-pmi-marlboro-red', name: 'Marlboro Red', brand_name: 'Marlboro', sku_code: 'MLB-RED', is_jti: false },
+  { id: 'sku-pmi-lm-red', name: 'L&M Red Label', brand_name: 'L&M', sku_code: 'LM-RED', is_jti: false },
+  { id: 'sku-bat-pallmall-red', name: 'Pall Mall Red', brand_name: 'Pall Mall', sku_code: 'PAL-RED', is_jti: false },
+];
+
+test('the prompt names the catalogue and the market context', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /Winston Red/);
+  assert.match(prompt, /Pall Mall Red/);
+  assert.match(prompt, /SGD/);
+  assert.match(prompt, /Singapore/);
+  // Standardised packaging is why the model must read text rather than look for colours.
+  assert.match(prompt, /standardised/i);
+  assert.match(prompt, /JSON only/i);
+});
+
+test('JSON is extracted from a bare response', () => {
+  const parsed = extractJson('{"detections":[{"product":"Winston Red","price":13.6}]}');
+  assert.equal(parsed.detections.length, 1);
+});
+
+test('JSON is extracted from a fenced code block', () => {
+  const parsed = extractJson('Here you go:\n```json\n{"detections":[{"product":"X","price":1}]}\n```\nHope that helps.');
+  assert.equal(parsed.detections.length, 1);
+});
+
+test('JSON is extracted when the model wraps it in prose', () => {
+  const parsed = extractJson('I can see the following: {"detections":[{"product":"Y","price":2}]} — that is all.');
+  assert.equal(parsed.detections[0].product, 'Y');
+});
+
+test('unparseable responses yield null rather than throwing', () => {
+  assert.equal(extractJson('I am sorry, I cannot read this image.'), null);
+  assert.equal(extractJson(''), null);
+  assert.equal(extractJson(null), null);
+});
+
+test('normalise folds punctuation and ampersands', () => {
+  assert.equal(normalise('L&M Red Label'), 'l and m red label');
+  assert.equal(normalise('  Pall  Mall—Red '), 'pall mall red');
+});
+
+test('exact catalogue names match their SKU', () => {
+  assert.equal(matchSku('Winston Red', SKUS).sku.id, 'sku-jti-winston-red');
+  assert.equal(matchSku('Mevius Original', SKUS).sku.id, 'sku-jti-mevius-original');
+  assert.equal(matchSku('Pall Mall Red', SKUS).sku.id, 'sku-bat-pallmall-red');
+});
+
+test('a shared variant word never matches across brands', () => {
+  // "Red" appears in four SKUs; the brand token has to decide.
+  assert.equal(matchSku('Marlboro Red', SKUS).sku.id, 'sku-pmi-marlboro-red');
+  assert.equal(matchSku('Winston Red', SKUS).sku.id, 'sku-jti-winston-red');
+});
+
+test('the more specific SKU wins over the bare brand', () => {
+  const match = matchSku('WINSTON BLUE', SKUS);
+  assert.equal(match.sku.id, 'sku-jti-winston-blue');
+});
+
+test('unknown products do not match', () => {
+  assert.equal(matchSku('Gudang Garam Surya', SKUS), null);
+  assert.equal(matchSku('', SKUS), null);
+  assert.equal(matchSku('   ', SKUS), null);
+});
+
+test('prices parse from numbers and from messy strings', () => {
+  assert.equal(parsePrice(13.6), 13.6);
+  assert.equal(parsePrice('13.60'), 13.6);
+  assert.equal(parsePrice('$13.60'), 13.6);
+  assert.equal(parsePrice('SGD 13.60'), 13.6);
+  assert.equal(parsePrice('13,60'), 13.6);
+  assert.equal(parsePrice('not a price'), null);
+  assert.equal(parsePrice(null), null);
+});
+
+test('a model response becomes detections in the shape the app consumes', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 13.6, confidence: 0.96, text: 'WINSTON Red $13.60' },
+      { product: 'Marlboro Red', price: '$16.00', confidence: 0.91, text: 'MARLBORO Red $16.00' },
+    ],
+  });
+  const { detections, unmatched } = parseModelResponse(response, SKUS);
+
+  assert.equal(detections.length, 2);
+  assert.equal(unmatched, 0);
+  assert.equal(detections[0].sku_candidate, 'sku-jti-winston-red');
+  assert.equal(detections[0].price_candidate, 13.6);
+  assert.equal(detections[0].confidence, 0.96);
+  assert.equal(detections[0].detected_is_jti, true);
+  assert.equal(detections[1].sku_candidate, 'sku-pmi-marlboro-red');
+  assert.equal(detections[1].price_candidate, 16);
+  assert.equal(detections[1].detected_is_jti, false);
+});
+
+test('a readable line that matches no SKU is kept for manual correction, not dropped', () => {
+  const response = JSON.stringify({
+    detections: [{ product: 'Gudang Garam Surya', price: 12.5, confidence: 0.9 }],
+  });
+  const { detections, unmatched } = parseModelResponse(response, SKUS);
+
+  assert.equal(detections.length, 1, 'the price is surfaced rather than silently discarded');
+  assert.equal(unmatched, 1);
+  assert.equal(detections[0].sku_candidate, null);
+  assert.ok(detections[0].confidence <= 0.5, 'an unmatched product cannot be high confidence');
+});
+
+test('rows without a readable price are skipped', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 'unreadable' },
+      { product: 'Winston Blue', price: 13.6 },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.equal(detections.length, 1);
+  assert.equal(detections[0].sku_candidate, 'sku-jti-winston-blue');
+});
+
+test('confidence is clamped into 0..1 whatever the model reports', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 13.6, confidence: 5 },
+      { product: 'Winston Blue', price: 13.6, confidence: -2 },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.ok(detections.every((d) => d.confidence >= 0 && d.confidence <= 1));
+});
+
+test('a refusal or unparseable answer yields no detections rather than throwing', () => {
+  const { detections, unmatched } = parseModelResponse('I cannot read this image.', SKUS);
+  assert.deepEqual(detections, []);
+  assert.equal(unmatched, 0);
+});
+
+test('a bare array response is accepted too', () => {
+  const { detections } = parseModelResponse('[{"product":"Winston Red","price":13.6}]', SKUS);
+  assert.equal(detections.length, 1);
+});
+
+test('the detection count is capped so one bad response cannot flood a visit', () => {
+  const rows = Array.from({ length: 200 }, () => ({ product: 'Winston Red', price: 13.6 }));
+  const { detections } = parseModelResponse(JSON.stringify({ detections: rows }), SKUS, {
+    maxDetections: 40,
+  });
+  assert.equal(detections.length, 40);
+});

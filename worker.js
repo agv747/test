@@ -9,6 +9,7 @@
  *   GET  /api/data       full dataset snapshot, in the shape the client store expects
  *   POST /api/mutations  apply a batch of writes
  *   POST /api/seed       create the tables and load the demo dataset (only while empty)
+ *   POST /api/recognise  run a vision model over a captured image
  *   GET  /api/health     database reachability and row counts
  *
  * The client falls back to its bundled seed data when the API is unavailable, so the app
@@ -25,6 +26,7 @@ import {
   upsertSql,
 } from './shared/schema.js';
 import { buildSeedData } from './public/app/seed.js';
+import { buildPrompt, parseModelResponse } from './shared/recognition.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -47,6 +49,10 @@ export default {
 };
 
 async function handleApi(request, env, url) {
+  // Recognition needs the AI binding, not the database.
+  if (url.pathname === '/api/recognise' && request.method === 'POST') {
+    return recognise(env, request);
+  }
   if (!env.DB) return json({ error: 'No database binding configured' }, 503);
 
   if (url.pathname === '/api/health') {
@@ -63,6 +69,98 @@ async function handleApi(request, env, url) {
     return seed(env, request);
   }
   return json({ error: 'Not found' }, 404);
+}
+
+/* ------------------------------------------------------------- recognition */
+
+/**
+ * Runs a vision model over a captured image and returns detections in the shape the field
+ * workflow already consumes.
+ *
+ * The call happens here, not in the browser: the model is reached through the Worker's `AI`
+ * binding, so no credential is ever shipped to a device that a TME carries into a shop.
+ *
+ * Failures are reported as failures. Falling back to the simulator would put invented
+ * prices in front of a TME under the banner of a real model, which is worse than an error.
+ */
+async function recognise(env, request) {
+  if (!env.AI) {
+    return json(
+      {
+        error: 'No AI binding configured',
+        hint: 'Add [ai] binding = "AI" to wrangler.toml and redeploy, or use the MVP Simulator.',
+      },
+      503,
+    );
+  }
+
+  const body = await request.json();
+  const { image, model, skus = [], currency = 'SGD' } = body ?? {};
+
+  if (typeof image !== 'string' || !image.length) throw new Error('image is required');
+  if (typeof model !== 'string' || !model.length) throw new Error('model is required');
+  if (!Array.isArray(skus) || !skus.length) throw new Error('skus is required');
+
+  const base64 = image.includes(',') ? image.slice(image.indexOf(',') + 1) : image;
+  const prompt = buildPrompt(skus, currency);
+  const started = Date.now();
+
+  let raw;
+  try {
+    raw = await runModel(env, model, prompt, base64);
+  } catch (err) {
+    return json({ error: `Model call failed: ${err.message}`, model }, 502);
+  }
+
+  const text = extractText(raw);
+  const { detections, unmatched } = parseModelResponse(text, skus, { currency });
+
+  return json({
+    model,
+    detections,
+    unmatched,
+    duration_ms: Date.now() - started,
+    // Returned so an operator can see what the model actually said when a read looks wrong.
+    raw_response: text?.slice(0, 4000) ?? null,
+  });
+}
+
+/**
+ * Cloudflare-hosted vision models take `{ prompt, image }` where image is a base64 string;
+ * models routed through AI Gateway take OpenAI-style multimodal `messages`.
+ */
+async function runModel(env, model, prompt, base64) {
+  if (model.startsWith('@cf/')) {
+    return env.AI.run(model, { prompt, image: `data:image/jpeg;base64,${base64}`, max_tokens: 1500 });
+  }
+  return env.AI.run(
+    model,
+    {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+          ],
+        },
+      ],
+      max_tokens: 1500,
+    },
+    { gateway: { id: env.AI_GATEWAY_ID || 'default' } },
+  );
+}
+
+/** Vision models differ in where they put the answer; take the first shape that has text. */
+function extractText(raw) {
+  if (typeof raw === 'string') return raw;
+  return (
+    raw?.response ??
+    raw?.result?.response ??
+    raw?.choices?.[0]?.message?.content ??
+    raw?.output_text ??
+    (raw ? JSON.stringify(raw) : null)
+  );
 }
 
 function json(body, status = 200) {

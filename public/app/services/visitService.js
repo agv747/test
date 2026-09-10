@@ -34,6 +34,7 @@ export async function processVisitImages({ visit, outlet, images, data, config, 
     priceRules: data.price_rules,
     competitorMappings: data.competitor_mappings,
     observedAt: when,
+    currency: config.currency,
   };
 
   const drafts = [];

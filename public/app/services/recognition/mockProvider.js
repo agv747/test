@@ -50,8 +50,13 @@ function boundingBox(rand, index, total) {
 
 export const mockRecognitionProvider = {
   id: 'mock-simulator',
-  label: 'MVP Simulator (deterministic)',
+  label: 'MVP Simulator',
   kind: 'simulated',
+  /** This provider never looks at the image; the UI states that plainly. */
+  reads_image: false,
+  description:
+    'Generates plausible detections from the SKU catalogue and price rules without looking at the image.',
+  cost: 'Free',
 
   /**
    * @param {{id:string,name:string,size:number,image_source:string}} image

@@ -14,6 +14,9 @@ export const DEFAULT_CONFIG = {
   /** Comparison method used when a mapping does not specify one. gap | price_index | both */
   comparison_method: 'both',
 
+  /** Active recognition model id — see RECOGNITION_MODELS. */
+  recognition_model: 'mock-simulator',
+
   /** Recognition confidence below which an observation is routed to Image Review. */
   confidence_review_threshold: 0.75,
   /** Manager dashboards may exclude observations below this confidence. */
@@ -77,6 +80,65 @@ export const DEFAULT_CONFIG = {
 export function defaultConfig() {
   return structuredClone(DEFAULT_CONFIG);
 }
+
+/**
+ * Recognition models offered in Admin (§27).
+ *
+ * `kind: 'simulated'` does not look at the image at all — it is a deterministic generator
+ * for demos and offline work. Everything else runs a real vision model server-side through
+ * the Worker's `AI` binding, so no credential ever reaches the browser.
+ *
+ * Cloudflare-hosted models (`@cf/…`) need only the AI binding. Third-party models
+ * (`author/model`) additionally need an AI Gateway with Unified Billing, where Cloudflare
+ * holds the provider credentials.
+ */
+export const RECOGNITION_MODELS = [
+  {
+    id: 'mock-simulator',
+    label: 'MVP Simulator',
+    kind: 'simulated',
+    reads_image: false,
+    description:
+      'Generates plausible detections from the SKU catalogue and price rules without looking at the image. Deterministic, free, offline — for demos and development only.',
+    cost: 'Free',
+  },
+  {
+    id: '@cf/qwen/qwen3.8-27b',
+    label: 'Qwen 3.8 27B',
+    kind: 'workers-ai',
+    reads_image: true,
+    description:
+      'Vision-language model with a large context window. The strongest Cloudflare-hosted option for reading a dense price list.',
+    cost: '$0.45 / M input tokens, $3.20 / M output tokens',
+  },
+  {
+    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
+    label: 'Llama 4 Scout 17B',
+    kind: 'workers-ai',
+    reads_image: true,
+    description: 'Natively multimodal mixture-of-experts model. A good balance of speed and accuracy.',
+    cost: 'See Workers AI pricing',
+  },
+  {
+    id: '@cf/meta/llama-3.2-11b-vision-instruct',
+    label: 'Llama 3.2 11B Vision',
+    kind: 'workers-ai',
+    reads_image: true,
+    description: 'Smaller and cheaper vision model. Try it when the price list is clean and high-contrast.',
+    cost: 'See Workers AI pricing',
+  },
+  {
+    id: 'openai/gpt-4.1-mini',
+    label: 'GPT-4.1 mini (via AI Gateway)',
+    kind: 'gateway',
+    reads_image: true,
+    description:
+      'Third-party model routed through AI Gateway. Requires a gateway with Unified Billing; Cloudflare holds the provider credentials, so no API key is stored here.',
+    cost: 'Billed through AI Gateway credits',
+  },
+];
+
+export const DEFAULT_RECOGNITION_MODEL = 'mock-simulator';
 
 export const PRICE_POSITION_STATUS = {
   WITHIN: 'Within Recommended Range',
