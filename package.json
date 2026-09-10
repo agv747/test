@@ -5,17 +5,19 @@
   "type": "module",
   "description": "Retail Price Intelligence — Singapore. Mobile-first field price capture + manager decision-support.",
   "scripts": {
+    "build": "echo \"No build step — public/ is served as-is.\"",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test \"tests/*.test.js\"",
     "serve": "node scripts/static-server.js",
     "smoke": "node scripts/smoke.mjs",
-    "demo-images": "node scripts/make-demo-images.mjs"
+    "bundle": "node scripts/bundle-standalone.mjs",
+    "demo-images": "node scripts/make-demo-images.mjs",
+    "toolchain": "npm install --no-save playwright esbuild"
   },
+  "//": "The application itself needs no dependencies — it is static ES modules. Playwright (smoke test, demo images) and esbuild (standalone bundle) are installed on demand via `npm run toolchain`, deliberately NOT declared here: a CI or Cloudflare build that runs `npm install` must not spend minutes downloading browser binaries, and must not fail the deploy if that download fails.",
   "devDependencies": {
-    "esbuild": "^0.28.2",
-    "playwright": "^1.63.0",
     "wrangler": "^4.0.0"
   }
 }
