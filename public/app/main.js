@@ -185,6 +185,21 @@ function mobileNavHtml(ctx) {
     .join('');
 }
 
+/**
+ * Says where the data on screen came from. Without this, an app falling back to the bundled
+ * seed looks identical to one reading shared observations — and a TME could submit a visit
+ * that never leaves their browser.
+ */
+function sourceIndicator() {
+  const { source, error } = store.dataSource();
+  if (error) {
+    return `<span class="pill pill--risk" title="${esc(error)}">▲ Not saving</span>`;
+  }
+  return source === 'database'
+    ? '<span class="pill pill--good" title="Observations are read from and written to the shared database">✓ Shared database</span>'
+    : '<span class="pill pill--watch" title="No database reachable — this browser only, changes are not shared">! Local demo data</span>';
+}
+
 function roleSwitcher(ctx) {
   return `<select data-action="switch-user" aria-label="Switch user" style="width:auto">
     ${ctx.data.users
@@ -233,6 +248,7 @@ export function render() {
             <h1>${esc(page.title(ctx))}</h1>
             <small>${page.subtitle ? esc(page.subtitle(ctx)) : ''}</small>
           </div>
+          ${sourceIndicator()}
           ${roleSwitcher(ctx)}
           <button class="btn btn--sm" data-action="reset-demo" title="Restore the demo dataset">Reset demo</button>
         </header>
@@ -258,9 +274,13 @@ function delegate(root) {
     if (!action) return;
 
     if (action.dataset.action === 'reset-demo') {
-      if (confirm('Reset all demo data back to the seeded dataset?')) {
-        store.resetToSeed();
-        render();
+      const { source } = store.dataSource();
+      const message =
+        source === 'database'
+          ? 'Discard local settings and reload the shared dataset from the database?'
+          : 'Reset all demo data back to the seeded dataset?';
+      if (confirm(message)) {
+        store.reload().then(render);
       }
       return;
     }
@@ -300,9 +320,14 @@ function delegate(root) {
   });
 }
 
-export function start() {
-  store.init();
+export async function start() {
   const root = document.getElementById('root');
+  root.innerHTML = '<div style="padding:40px;text-align:center;color:#5b6472">Loading price data…</div>';
+
+  // The dataset is loaded once, before the first render, so every page and service can keep
+  // reading it synchronously.
+  await store.init();
+
   delegate(root);
   window.addEventListener('hashchange', render);
   if (!location.hash) navigate(defaultRoute());

@@ -13,7 +13,7 @@
  *   - a superseded price rule, so historical integrity is visible (§25).
  */
 
-import { rngFor } from './lib/rng.js';
+import { hashString, rngFor } from './lib/rng.js';
 import { round } from './lib/stats.js';
 import { resolveEffectivePriceRule, snapshotPriceRule } from './services/priceRuleService.js';
 import {
@@ -328,6 +328,18 @@ function competitorBasePrice(skuId, dayOffset) {
   return base;
 }
 
+/**
+ * Fingerprint of the master data this module generates.
+ *
+ * A cached copy of the dataset is only reusable while the generator still produces the same
+ * catalogue. Deriving the fingerprint from the constants means editing a SKU, brand, outlet
+ * or user automatically invalidates every cached copy — there is no version number to
+ * remember to bump, which is exactly the mistake that shipped stale data once already.
+ */
+export const SEED_FINGERPRINT = hashString(
+  JSON.stringify([USERS, BRANDS, JTI_SKUS, COMPETITOR_SKUS, OUTLET_DEFS, TERRITORIES, CHANNELS]),
+).toString(36);
+
 export function buildSeedData(nowIso = new Date().toISOString()) {
   const now = nowIso;
   const skus = buildSkus();
@@ -600,7 +612,8 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
   });
 
   return {
-    schema_version: 2,
+    schema_version: 3,
+    seed_fingerprint: SEED_FINGERPRINT,
     market: 'SG',
     generated_at: now,
     territories: TERRITORIES,

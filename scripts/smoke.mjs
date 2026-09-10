@@ -16,8 +16,14 @@ import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
+/**
+ * By default the suite boots its own static server, which exercises the local-seed
+ * fallback. Point SMOKE_BASE at a running `wrangler dev` (or a deployment) to run the same
+ * checks against the real Worker and its database instead.
+ */
+const EXTERNAL_BASE = process.env.SMOKE_BASE ?? null;
 const PORT = Number(process.env.PORT ?? 8799);
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = EXTERNAL_BASE ?? `http://127.0.0.1:${PORT}`;
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 const SHOTS = process.env.SHOTS === '1';
 const SHOT_DIR = '.smoke-screenshots';
@@ -26,12 +32,42 @@ const errors = [];
 const fail = (msg) => errors.push(msg);
 const check = (ok, msg) => (ok ? console.log(`  ✓ ${msg}`) : fail(msg));
 
-const server = spawn(process.execPath, ['scripts/static-server.js', String(PORT), 'public'], {
-  stdio: 'ignore',
-});
-process.on('exit', () => server.kill());
+const server = EXTERNAL_BASE
+  ? null
+  : spawn(process.execPath, ['scripts/static-server.js', String(PORT), 'public'], { stdio: 'ignore' });
+process.on('exit', () => server?.kill());
 await new Promise((r) => setTimeout(r, 900));
+console.log(`Target: ${BASE}${EXTERNAL_BASE ? ' (external)' : ' (bundled static server)'}`);
 if (SHOTS) await mkdir(SHOT_DIR, { recursive: true });
+
+/** Row counts before the run, when the target actually has a database behind it. */
+const dbBaseline = await readDbCounts();
+console.log(
+  dbBaseline
+    ? `Database: reachable (${dbBaseline.price_observations} observations)`
+    : 'Database: not reachable — exercising the local-seed fallback',
+);
+
+async function readDbCounts() {
+  try {
+    const response = await fetch(`${BASE}/api/health`);
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body?.counts ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Writes are sent in the background, so poll briefly rather than assuming instant arrival. */
+async function waitForDbGrowth(from, attempts = 12) {
+  for (let i = 0; i < attempts; i += 1) {
+    const counts = await readDbCounts();
+    if (counts && counts.price_observations > from) return counts.price_observations;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return (await readDbCounts())?.price_observations ?? from;
+}
 
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 const page = await browser.newPage({ viewport: { width: 414, height: 896 } });
@@ -144,6 +180,25 @@ try {
   check((await page.locator('.disclaimer', { hasText: 'Visit submitted' }).count()) > 0, 'submission is confirmed');
   await shot('09-outlet-after-submit');
 
+  // The point of the database layer: the visit must exist outside this browser. Checking the
+  // in-page count would pass just as happily on memory-only state, so ask the API directly
+  // and then re-read it in a browser context that has never seen this session's storage.
+  if (dbBaseline) {
+    const after = await waitForDbGrowth(dbBaseline.price_observations);
+    check(
+      after > dbBaseline.price_observations,
+      `visit persisted to the database (${dbBaseline.price_observations} → ${after} observations)`,
+    );
+
+    const fresh = await browser.newContext();
+    const freshPage = await fresh.newPage();
+    await freshPage.goto(`${BASE}/#/manager/tower`, { waitUntil: 'load' });
+    await freshPage.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
+    const indicator = await freshPage.locator('.topbar .pill').first().textContent();
+    check(/Shared database/.test(indicator), 'a new browser reads from the shared database');
+    await fresh.close();
+  }
+
   /* --------------------------------------------- manager routes (desktop) */
   console.log('\nManager and admin routes (1440×950)');
   await page.setViewportSize({ width: 1440, height: 950 });
@@ -230,7 +285,7 @@ try {
   console.error(err);
 } finally {
   await browser.close();
-  server.kill();
+  server?.kill();
 }
 
 process.exit(errors.length ? 1 : 0);
