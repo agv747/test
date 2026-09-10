@@ -28,7 +28,7 @@ than declared in `package.json`, so that a CI or Cloudflare build running `npm i
 spends minutes fetching browser binaries — or fails the deploy when that fetch does:
 
 ```bash
-npm run toolchain   # installs playwright + esbuild (no-save)
+npm run toolchain   # installs wrangler + playwright + esbuild (no-save)
 npm run smoke       # end-to-end browser test: full field flow + every manager route
 npm run bundle      # single self-contained HTML file in dist/
 npm run demo-images # regenerate the sample shelf photos
