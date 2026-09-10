@@ -15,8 +15,13 @@ const TABS = [
   ['scoring', 'Priority scoring'],
   ['thresholds', 'Thresholds'],
   ['recognition', 'Recognition provider'],
+  ['database', 'Database'],
   ['exports', 'Exports'],
 ];
+
+/** Populated asynchronously by mount(); null until the health probe answers. */
+let dbHealth = null;
+let dbMessage = null;
 
 export function render(ctx) {
   return `
@@ -37,8 +42,56 @@ export function render(ctx) {
             ? thresholdsTab(ctx)
             : tab === 'recognition'
               ? recognitionTab(ctx)
-              : exportsTab(ctx)
+              : tab === 'database'
+                ? databaseTab(ctx)
+                : exportsTab(ctx)
     }`;
+}
+
+/* -------------------------------------------------------------- database */
+
+function databaseTab(ctx) {
+  const { source, error } = ctx.store.dataSource();
+  const rows = dbHealth?.counts
+    ? Object.entries(dbHealth.counts).map(([table, n]) => `<tr><td>${esc(table)}</td><td class="num">${n}</td></tr>`).join('')
+    : '';
+  const empty = dbHealth && dbHealth.seeded === false;
+
+  return `<div class="card">
+    <div class="card__head"><h2>Data source</h2></div>
+    ${
+      source === 'database'
+        ? disclaimer('Observations are read from and written to the <strong>shared database</strong>. A visit submitted on a phone is visible to a manager on another device.')
+        : `<div class="disclaimer" style="background:var(--watch-bg);border-color:var(--watch-border);color:var(--watch)">
+             <strong>!</strong><span>Running on <strong>bundled demo data</strong> in this browser only. Changes are not shared with anyone else.
+             ${error ? `<br />Reason: ${esc(error)}` : ''}</span></div>`
+    }
+
+    ${
+      empty
+        ? `<div class="card" style="border-color:var(--info-border);background:var(--info-bg);box-shadow:none">
+             <h3>The database is reachable but empty</h3>
+             <p class="small">Load the demo dataset into it once. Afterwards every device reads the same observations.</p>
+             <button class="btn btn--primary btn--sm" data-action="seed-db">Load demo data into the database</button>
+           </div>`
+        : ''
+    }
+    ${dbMessage ? `<p class="small">${esc(dbMessage)}</p>` : ''}
+
+    ${
+      rows
+        ? `<h3 class="mt">Rows in the database</h3>
+           <div class="table-wrap"><table><thead><tr><th class="no-sort">Table</th><th class="no-sort right">Rows</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : '<p class="small muted mt">No database reachable from this build.</p>'
+    }
+
+    <h3 class="mt">What lives where</h3>
+    <ul class="small">
+      <li><strong>Database</strong> — outlets, SKUs, price rules, competitor mappings, visits, images, observations, field actions and opportunity status. Shared by everyone.</li>
+      <li><strong>This browser</strong> — the selected user, manager filter state and the tuning values on the other tabs. Personal preferences, not observations.</li>
+    </ul>
+    <button class="btn btn--sm mt" data-action="refresh-health">Refresh</button>
+  </div>`;
 }
 
 /* ------------------------------------------------------------- SKU master */
@@ -274,7 +327,28 @@ export function onAction(action, el, ctx) {
   switch (action) {
     case 'tab':
       tab = el.dataset.tab;
+      dbMessage = null;
       ctx.render();
+      break;
+    case 'refresh-health':
+      dbHealth = null;
+      dbMessage = null;
+      ctx.render();
+      break;
+    case 'seed-db':
+      el.disabled = true;
+      dbMessage = 'Loading the demo dataset into the database…';
+      ctx.store
+        .seedDatabase()
+        .then((result) => {
+          dbHealth = null;
+          dbMessage = `Loaded ${result.rows} rows. Every device now reads the same data.`;
+          ctx.render();
+        })
+        .catch((err) => {
+          dbMessage = `Could not load the dataset: ${err.message}`;
+          ctx.render();
+        });
       break;
     case 'export-skus':
       downloadCsv(
@@ -474,6 +548,13 @@ export function onChange(target, ctx) {
 }
 
 export function mount(ctx, root) {
+  if (tab === 'database' && dbHealth === null) {
+    ctx.store.databaseHealth().then((health) => {
+      dbHealth = health ?? { ok: false, seeded: false, counts: {} };
+      ctx.render();
+    });
+  }
+
   const input = root.querySelector('#sku-import');
   if (!input) return;
   input.addEventListener('change', async (e) => {

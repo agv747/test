@@ -36,6 +36,48 @@ npm run bundle      # single self-contained HTML file in dist/
 npm run demo-images # regenerate the sample shelf photos
 ```
 
+### Where the data lives
+
+Observations are stored in **Cloudflare D1**, so a visit a TME submits on a phone is visible
+to a manager on a laptop. The client loads the whole dataset once from `/api/data` and keeps
+it in memory, which keeps every read synchronous; writes update memory immediately and are
+sent to `/api/mutations` in the background.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/data` | full dataset snapshot, in the shape the client store expects |
+| `POST /api/mutations` | batch of upserts / deletes, constrained to the declared schema |
+| `POST /api/seed` | create the tables and load the demo dataset — **only while empty** |
+| `GET /api/health` | reachability and row counts |
+
+`shared/schema.js` declares every table and column once and drives the DDL, the reads and
+the writes, so the two sides cannot drift. SQLite has no boolean and a few fields hold
+arrays, so the descriptor marks those columns and the conversions happen in one place.
+
+**Bootstrapping a fresh database:** open **Admin → Database** and press *Load demo data into
+the database*. Seeding without a credential is allowed only while the database is empty, so a
+new deployment can bootstrap itself but nobody can wipe live observations by calling a URL.
+Re-seeding a populated database needs an `x-seed-token` header matching a `SEED_TOKEN`
+binding, which is deliberately not configured.
+
+**Without a database** — a plain static host, the standalone build, or a deploy with no D1
+binding — the client falls back to its bundled seed data and keeps working. The top bar says
+which of the two is live, because an app quietly running on per-browser data looks identical
+to one reading shared observations, and a TME could otherwise submit a visit that never
+leaves their phone.
+
+Session state (selected user, manager filters) and the tuning values on the Admin tabs stay
+per-browser in `localStorage`: they are the viewer's own preferences, not observations. The
+cache key carries a fingerprint derived from the seed catalogue, so changing a SKU, outlet or
+user automatically orphans every previously cached copy.
+
+```bash
+node scripts/seed-db.mjs                                   # writes dist/seed.sql
+npx wrangler d1 execute retail-price-intelligence --local  --file=dist/seed.sql
+npx wrangler d1 execute retail-price-intelligence --remote --file=dist/seed.sql
+SMOKE_BASE=http://127.0.0.1:8787 npm run smoke             # smoke against a real Worker + D1
+```
+
 ### Deploying
 
 The app deploys as a single Cloudflare Worker serving `public/` as static assets. Validate

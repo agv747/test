@@ -9,3 +9,10 @@ main = "worker.js"
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+
+# Shared observation store. Without this binding the API returns 503 and the client falls
+# back to its bundled seed data, so the app still runs on a plain static host.
+[[d1_databases]]
+binding = "DB"
+database_name = "retail-price-intelligence"
+database_id = "9fabe7e1-fb10-455b-adf8-15bcb16a8f5d"

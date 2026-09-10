@@ -1,17 +1,32 @@
 /**
  * Store — single source of truth for entities, configuration and session.
  *
- * Persistence is localStorage in the MVP. Every read/write goes through this module, so
- * replacing it with a REST/D1 backend is a one-file change; UI and services never touch
- * storage directly.
+ * Observations live in the D1 database behind `/api/data`, so a visit submitted on a phone
+ * is visible to a manager on a laptop. The whole dataset is loaded once at startup and kept
+ * in memory, which keeps every read synchronous for the UI and the services; writes update
+ * memory immediately and are sent to the API in the background.
+ *
+ * When the API is unavailable — a plain static host, the single-file standalone build, or a
+ * deploy without the database binding — the store falls back to the bundled seed data and
+ * keeps working locally. `dataSource()` reports which of the two is in effect so the UI can
+ * say so rather than silently showing per-browser data.
+ *
+ * Session and configuration stay per-browser in localStorage: they are the viewer's own
+ * preferences, not shared observation data.
  */
 
-import { buildSeedData } from './seed.js';
+import { buildSeedData, SEED_FINGERPRINT } from './seed.js';
 import { defaultConfig } from './config.js';
 
-const STORAGE_KEY = 'rpi-sg:data:v2';
-const CONFIG_KEY = 'rpi-sg:config:v2';
-const SESSION_KEY = 'rpi-sg:session:v2';
+/**
+ * The cache key carries the seed fingerprint, so changing the SKU catalogue, outlets or
+ * users automatically orphans every previously cached copy. A hand-maintained version
+ * number was missed once and shipped stale data to everyone who had opened the app before.
+ */
+const STORAGE_KEY = `rpi-sg:data:${SEED_FINGERPRINT}`;
+const CONFIG_KEY = 'rpi-sg:config:v3';
+const SESSION_KEY = 'rpi-sg:session:v3';
+const API_BASE = '/api';
 
 const hasStorage = (() => {
   try {
@@ -46,9 +61,19 @@ function writeJson(key, value) {
   }
 }
 
-export function init({ force = false, now = new Date().toISOString() } = {}) {
-  const stored = force ? null : readJson(STORAGE_KEY);
-  data = stored && stored.schema_version === 2 ? stored : buildSeedData(now);
+/** 'database' once the API has answered; 'local' while running on the bundled seed. */
+let source = 'local';
+let lastError = null;
+
+export function dataSource() {
+  return { source, error: lastError };
+}
+
+/**
+ * Loads the dataset. Prefers the database; falls back to the local seed so the app always
+ * starts, and records which happened.
+ */
+export async function init({ now = new Date().toISOString(), offline = false } = {}) {
   config = readJson(CONFIG_KEY) ?? defaultConfig();
   session =
     readJson(SESSION_KEY) ?? {
@@ -57,27 +82,71 @@ export function init({ force = false, now = new Date().toISOString() } = {}) {
       /** Manager filter state persists across navigation. */
       filters: {},
     };
-  if (!stored || force) writeJson(STORAGE_KEY, data);
-  notify();
-  return data;
-}
 
-export function resetToSeed(now = new Date().toISOString()) {
-  data = buildSeedData(now);
-  config = defaultConfig();
+  if (!offline) {
+    const remote = await fetchDataset();
+    if (remote) {
+      data = remote;
+      source = 'database';
+      lastError = null;
+      notify();
+      return data;
+    }
+  }
+
+  const cached = readJson(STORAGE_KEY);
+  data = cached?.seed_fingerprint === SEED_FINGERPRINT ? cached : buildSeedData(now);
+  source = 'local';
   writeJson(STORAGE_KEY, data);
-  writeJson(CONFIG_KEY, config);
   notify();
   return data;
 }
 
+async function fetchDataset() {
+  if (typeof fetch === 'undefined') return null;
+  try {
+    const response = await fetch(`${API_BASE}/data`, { headers: { accept: 'application/json' } });
+    if (!response.ok) {
+      lastError = `API responded ${response.status}`;
+      return null;
+    }
+    const body = await response.json();
+    if (!Array.isArray(body?.price_observations)) {
+      lastError = 'API returned an unexpected shape';
+      return null;
+    }
+    return body;
+  } catch (err) {
+    lastError = err.message;
+    return null;
+  }
+}
+
+/** Discards local overrides and reloads. Against a database this re-reads shared data. */
+export async function reload(now = new Date().toISOString()) {
+  if (hasStorage) {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(CONFIG_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+  config = defaultConfig();
+  return init({ now });
+}
+
+/**
+ * Reads are synchronous by design — every page and service depends on it. `init()` runs
+ * before the first render; these guards only cover a direct call from a test or a console.
+ */
 export function getData() {
-  if (!data) init();
+  if (!data) data = buildSeedData();
   return data;
 }
 
 export function getConfig() {
-  if (!config) init();
+  if (!config) config = defaultConfig();
   return config;
 }
 
@@ -89,7 +158,7 @@ export function updateConfig(patch) {
 }
 
 export function getSession() {
-  if (!session) init();
+  if (!session) session = { user_id: 'usr-tme-1', role: 'field', filters: {} };
   return session;
 }
 
@@ -120,9 +189,77 @@ function notify() {
   }
 }
 
-function persist() {
+/**
+ * Records a change: memory and the local cache update immediately so the UI never waits,
+ * and the same change is sent to the database in the background.
+ *
+ * A failed send is surfaced through `dataSource()` rather than swallowed — the alternative
+ * is a visit that looks submitted but exists only in one browser, which is the failure this
+ * whole layer exists to prevent.
+ */
+function persist(mutations = []) {
   writeJson(STORAGE_KEY, data);
   notify();
+  if (mutations.length && source === 'database') void pushMutations(mutations);
+}
+
+/** Writes still in flight, so a caller can await a clean hand-off before navigating away. */
+const pending = new Set();
+
+async function pushMutations(mutations) {
+  const task = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/mutations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mutations }),
+      });
+      if (!response.ok) throw new Error(`API responded ${response.status}`);
+      lastError = null;
+    } catch (err) {
+      lastError = `Could not save to the database: ${err.message}`;
+      console.error('Mutation failed', err, mutations);
+      notify();
+    }
+  })();
+  pending.add(task);
+  try {
+    await task;
+  } finally {
+    pending.delete(task);
+  }
+}
+
+/** Resolves once every queued write has been sent. */
+export async function flush() {
+  await Promise.allSettled([...pending]);
+  return lastError;
+}
+
+const upsert = (table, row) => ({ op: 'upsert', table, row });
+const remove = (table, id) => ({ op: 'delete', table, id });
+
+/** Database reachability and row counts, or null when there is no API behind this build. */
+export async function databaseHealth() {
+  try {
+    const response = await fetch(`${API_BASE}/health`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bootstraps an empty database with the demo dataset. The Worker refuses when the database
+ * already holds data, so this cannot wipe live observations by accident.
+ */
+export async function seedDatabase() {
+  const response = await fetch(`${API_BASE}/seed`, { method: 'POST' });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? `API responded ${response.status}`);
+  await init();
+  return body;
 }
 
 /* ---------------------------------------------------------------------------
@@ -175,7 +312,7 @@ export function createVisit({ outlet_id, user_id, notes = '' }) {
     notes,
   };
   getData().visits.push(visit);
-  persist();
+  persist([upsert('visits', visit)]);
   return visit;
 }
 
@@ -183,22 +320,26 @@ export function updateVisit(id, patch) {
   const visit = byId('visits', id);
   if (!visit) return null;
   Object.assign(visit, patch);
-  persist();
+  persist([upsert('visits', visit)]);
   return visit;
 }
 
 export function addImage(image) {
   const record = { id: nextId('images', 'img'), uploaded_at: new Date().toISOString(), ...image };
   getData().images.push(record);
-  persist();
+  persist([upsert('images', record)]);
   return record;
 }
 
 export function removeImage(id) {
   const d = getData();
+  const orphaned = d.price_observations.filter((o) => o.image_id === id).map((o) => o.id);
   d.images = d.images.filter((i) => i.id !== id);
   d.price_observations = d.price_observations.filter((o) => o.image_id !== id);
-  persist();
+  persist([
+    remove('images', id),
+    ...orphaned.map((obsId) => remove('price_observations', obsId)),
+  ]);
 }
 
 export function addObservations(observations) {
@@ -210,7 +351,7 @@ export function addObservations(observations) {
     ...o,
   }));
   getData().price_observations.push(...created);
-  persist();
+  persist(created.map((o) => upsert('price_observations', o)));
   return created;
 }
 
@@ -218,7 +359,7 @@ export function updateObservation(id, patch) {
   const obs = byId('price_observations', id);
   if (!obs) return null;
   Object.assign(obs, patch);
-  persist();
+  persist([upsert('price_observations', obs)]);
   return obs;
 }
 
@@ -229,7 +370,7 @@ export function addFieldAction(action) {
     ...action,
   };
   getData().field_actions.push(record);
-  persist();
+  persist([upsert('field_actions', record)]);
   return record;
 }
 
@@ -237,7 +378,13 @@ export function addFieldAction(action) {
 export function setOpportunityState(id, patch) {
   const d = getData();
   d.opportunity_states[id] = { ...(d.opportunity_states[id] ?? {}), ...patch };
-  persist();
+  persist([
+    upsert('opportunity_states', {
+      id,
+      ...d.opportunity_states[id],
+      updated_at: new Date().toISOString(),
+    }),
+  ]);
   return d.opportunity_states[id];
 }
 
@@ -252,14 +399,15 @@ export function upsertPriceRule(rule) {
   const existing = d.price_rules.find((r) => r.id === rule.id);
   if (existing) Object.assign(existing, rule);
   else d.price_rules.push({ ...rule, id: rule.id || nextId('price_rules', 'pr') });
-  persist();
-  return rule;
+  const saved = d.price_rules.find((r) => r.id === rule.id) ?? d.price_rules[d.price_rules.length - 1];
+  persist([upsert('price_rules', saved)]);
+  return saved;
 }
 
 export function deletePriceRule(id) {
   const d = getData();
   d.price_rules = d.price_rules.filter((r) => r.id !== id);
-  persist();
+  persist([remove('price_rules', id)]);
 }
 
 export function upsertCompetitorMapping(mapping) {
@@ -267,25 +415,28 @@ export function upsertCompetitorMapping(mapping) {
   const existing = d.competitor_mappings.find((m) => m.id === mapping.id);
   if (existing) Object.assign(existing, mapping);
   else d.competitor_mappings.push({ ...mapping, id: mapping.id || nextId('competitor_mappings', 'cm') });
-  persist();
-  return mapping;
+  const saved =
+    d.competitor_mappings.find((m) => m.id === mapping.id) ??
+    d.competitor_mappings[d.competitor_mappings.length - 1];
+  persist([upsert('competitor_mappings', saved)]);
+  return saved;
 }
 
 export function deleteCompetitorMapping(id) {
   const d = getData();
   d.competitor_mappings = d.competitor_mappings.filter((m) => m.id !== id);
-  persist();
+  persist([remove('competitor_mappings', id)]);
 }
 
 export function updateSku(id, patch) {
   const sku = byId('skus', id);
   if (!sku) return null;
   Object.assign(sku, patch);
-  persist();
+  persist([upsert('skus', sku)]);
   return sku;
 }
 
 export function replaceCollection(name, rows) {
   getData()[name] = rows;
-  persist();
+  persist(rows.map((row) => upsert(name, row)));
 }
