@@ -23,9 +23,11 @@ npm run deploy  # publish to Cloudflare Workers
 
 No build step. The app is plain ES modules served as static assets by a Cloudflare Worker.
 
-**The application itself has no dependencies.** Two dev tools are installed on demand rather
-than declared in `package.json`, so that a CI or Cloudflare build running `npm install` never
-spends minutes fetching browser binaries — or fails the deploy when that fetch does:
+**The application declares no dependencies at all**, so `npm install` fetches nothing and the
+lockfile holds only the root package. That is deliberate: a declared dependency means the
+deploy build runs `npm ci`, and a lockfile that resolves differently on the build machine than
+on the author's then fails the deploy for reasons unrelated to the app. Local tooling is
+installed on demand instead:
 
 ```bash
 npm run toolchain   # installs wrangler + playwright + esbuild (no-save)
@@ -58,9 +60,14 @@ export CLOUDFLARE_ACCOUNT_ID=...    # Cloudflare dashboard → Workers & Pages �
 npm run deploy
 ```
 
-The token needs **Account → Workers Scripts → Edit**. The published URL is
-`retail-price-intelligence-sg.<your-subdomain>.workers.dev`; rename the Worker by changing
-`name` in `wrangler.toml`.
+The token needs **Account → Workers Scripts → Edit**. The Worker name in `wrangler.toml`
+must match the deployed Worker (`price-check`), otherwise the deploy creates a second copy
+instead of updating the live one.
+
+Deploying from Git instead: Cloudflare builds the repository's **default branch**. If the
+live URL serves something unexpected, check **Workers & Pages → the project → Deployments**
+for which commit was built and whether the build succeeded — a failed build leaves the
+previous deployment serving.
 
 Nothing in the app is server-side — state lives in the visitor's browser — so a deploy is
 just an asset upload and is safe to repeat.
@@ -69,8 +76,8 @@ just an asset upload and is safe to repeat.
 
 1. Open the app — you start as **Wei Ling Tan (Trade Marketer)**.
 2. **Start Price Check → search "Punggol" → Punggol Central Minimart.**
-3. **Choose from Gallery.** Sample shelf photos are linked on that screen, or use any photo
-   from your own device — the recognition simulator works with any image.
+3. **Choose from Gallery**, or tap one of the **sample shelf photos** on that screen — the
+   recognition simulator works with any image, including a real photo from your device.
 4. Confirm the detected prices, correct one, record a field action, submit.
 5. Switch the user dropdown (top right) to **Priya Nair — Manager** and open the
    **Price Control Tower**: the visit you just submitted is already in the KPIs, the price
