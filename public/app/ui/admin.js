@@ -286,6 +286,8 @@ function recognitionTab(ctx) {
     const selected = p.id === active.id;
     const simulated = p.reads_image === false;
     const paid = p.tier === 'paid';
+    const byoKey = p.tier === 'byo-key';
+    const keyMissing = byoKey && workerCfg && !workerCfg.openai_key_configured;
     return `<div class="detection detection--${selected ? 'good' : paid ? 'watch' : 'none'}" style="cursor:pointer"
         data-action="pick-model" data-model="${esc(p.id)}">
       <div class="detection__head">
@@ -295,14 +297,19 @@ function recognitionTab(ctx) {
             ${p.recommended && !selected ? '<span class="pill pill--info">Recommended</span>' : ''}
             ${simulated
               ? '<span class="pill pill--watch">! Does not read the image</span>'
-              : paid
-                ? '<span class="pill pill--risk">$ Needs paid plan or credits</span>'
-                : '<span class="pill pill--good">✓ Free allocation</span>'}
+              : byoKey
+                ? (keyMissing
+                    ? '<span class="pill pill--risk">▲ API key not configured</span>'
+                    : '<span class="pill pill--good">✓ Your OpenAI key</span>')
+                : paid
+                  ? '<span class="pill pill--risk">$ Needs paid plan or credits</span>'
+                  : '<span class="pill pill--good">✓ Free allocation</span>'}
           </div>
           <div class="detection__meta mono xsmall">${esc(p.id)}</div>
           <div class="detection__meta">${esc(p.description ?? '')}</div>
           <div class="detection__meta"><strong>Cost:</strong> ${esc(p.cost ?? '—')}</div>
           ${p.licence ? `<div class="detection__meta"><strong>Licence:</strong> ${esc(p.licence.name)} — one-time acceptance required</div>` : ''}
+          ${p.requires_secret ? `<div class="detection__meta"><strong>Requires secret:</strong> <span class="mono">${esc(p.requires_secret)}</span> on the Worker</div>` : ''}
           ${
             p.reads_image
               ? `<div class="toolbar" style="margin-top:7px">
@@ -318,7 +325,8 @@ function recognitionTab(ctx) {
 
   // Free options first, so the cheapest working choice is the one in front of the reader.
   const ordered = [...providers].sort((a, b) => {
-    const rank = (p) => (p.reads_image === false ? 0 : p.tier === 'paid' ? 2 : 1);
+    const rank = (p) =>
+      p.reads_image === false ? 0 : p.tier === 'free' ? 1 : p.tier === 'byo-key' ? 2 : 3;
     return rank(a) - rank(b);
   });
 
@@ -374,7 +382,9 @@ detection = {
              ${bindingRow('Database binding (env.DB)', workerCfg.db_binding)}
              <div class="detection__row"><dt>AI Gateway id</dt><dd class="mono">${esc(workerCfg.ai_gateway_id)}</dd></div>
              ${bindingRow('Re-seed token configured', workerCfg.seed_token_configured)}
+             ${bindingRow('OpenAI API key (OPENAI_API_KEY)', workerCfg.openai_key_configured)}
            </dl>
+           ${workerCfg.openai_key_configured ? '' : openAiSetup()}
            <p class="xsmall muted mt">Without the AI binding only the simulator works. Without the database binding the app falls back to bundled data in each browser.</p>`
         : '<p class="small muted">No API reachable from this build — recognition models and the database are unavailable, and the simulator is used.</p>'
     }
@@ -391,6 +401,28 @@ detection = {
     <pre class="small mono" style="background:#14181f;color:#cfe0d9;padding:12px;border-radius:var(--radius-sm);overflow-x:auto;max-height:420px;white-space:pre-wrap">${
       testLog.length ? esc(testLog.join('\n')) : 'No calls yet. Press “Test on a sample image” above to run one model against a demo price list and see exactly what it returns.'
     }</pre>
+  </div>`;
+}
+
+/**
+ * The key is set as a Worker secret, not entered here.
+ *
+ * This application has no authentication: anyone with the URL can use it. A key stored in
+ * the database, or accepted through a form and echoed back, would be a key anyone with the
+ * URL could take or spend. As a Worker secret it is readable only by the Worker itself.
+ */
+function openAiSetup() {
+  return `<div class="card" style="border-color:var(--info-border);background:var(--info-bg);box-shadow:none;margin-top:12px">
+    <h3>Using your own OpenAI key</h3>
+    <p class="small">The key is stored as a <strong>Worker secret</strong> — never in this application's database, and never returned to a browser. Set it once:</p>
+    <ol class="small">
+      <li>Create a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com/api-keys</a>.</li>
+      <li>Cloudflare dashboard → <strong>Workers &amp; Pages</strong> → this Worker → <strong>Settings</strong> → <strong>Variables and Secrets</strong>.</li>
+      <li><strong>Add</strong> → type <strong>Secret</strong> → name <span class="mono">OPENAI_API_KEY</span> → paste the key → <strong>Deploy</strong>.</li>
+      <li>Come back here, press <strong>Refresh</strong>, then <strong>Test on a sample image</strong>.</li>
+    </ol>
+    <p class="xsmall muted">From a terminal instead: <span class="mono">npx wrangler secret put OPENAI_API_KEY</span></p>
+    <p class="xsmall muted">Anyone who can open this application can spend against that key, because there is no sign-in. Use a key with a spending limit set on the OpenAI side.</p>
   </div>`;
 }
 

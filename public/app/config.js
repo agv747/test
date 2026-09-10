@@ -162,6 +162,32 @@ export const RECOGNITION_MODELS = [
     cost: '$0.45 / M input tokens, $3.20 / M output tokens',
   },
   {
+    id: 'openai:gpt-4.1-mini',
+    label: 'OpenAI GPT-4.1 mini',
+    kind: 'openai',
+    tier: 'byo-key',
+    input: 'messages',
+    api_model: 'gpt-4.1-mini',
+    requires_secret: 'OPENAI_API_KEY',
+    reads_image: true,
+    description:
+      'Called directly against your own OpenAI account. Strong at reading a dense price list, and it supports JSON mode, so the response parses reliably. Cheaper of the two OpenAI options.',
+    cost: 'Billed to your OpenAI account',
+  },
+  {
+    id: 'openai:gpt-4o',
+    label: 'OpenAI GPT-4o',
+    kind: 'openai',
+    tier: 'byo-key',
+    input: 'messages',
+    api_model: 'gpt-4o',
+    requires_secret: 'OPENAI_API_KEY',
+    reads_image: true,
+    description:
+      'The most capable option here for a poor photograph or a crowded price list. Costs more per image than GPT-4.1 mini.',
+    cost: 'Billed to your OpenAI account',
+  },
+  {
     id: 'openai/gpt-4.1-mini',
     label: 'GPT-4.1 mini (via AI Gateway)',
     kind: 'gateway',
@@ -169,7 +195,7 @@ export const RECOGNITION_MODELS = [
     input: 'messages',
     reads_image: true,
     description:
-      'Third-party model routed through AI Gateway. Needs a gateway with Unified Billing and prepaid credits; Cloudflare holds the provider credentials, so no API key is stored here.',
+      'The same model routed through Cloudflare AI Gateway instead of your own key. Needs a gateway with Unified Billing and prepaid credits; use this only if you would rather Cloudflare held the provider credentials.',
     cost: 'Billed through AI Gateway credits',
   },
 ];

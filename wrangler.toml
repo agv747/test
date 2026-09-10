@@ -25,3 +25,10 @@ binding = "AI"
 binding = "DB"
 database_name = "retail-price-intelligence"
 database_id = "9fabe7e1-fb10-455b-adf8-15bcb16a8f5d"
+
+# Optional secrets, set with `npx wrangler secret put <NAME>` or in the dashboard under
+# Settings → Variables and Secrets. Never commit their values.
+#
+#   OPENAI_API_KEY  enables the OpenAI models; read only by the Worker, never returned
+#   SEED_TOKEN      allows re-seeding a database that already holds data
+#   AI_GATEWAY_ID   overrides the AI Gateway used for third-party models (default: "default")

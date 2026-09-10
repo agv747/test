@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 124 unit/integration tests (node:test, no browser needed)
+npm test        # 144 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -251,12 +251,42 @@ survives a reload.
 
 | Model | Reads the image? | Cost |
 |---|---|---|
-| MVP Simulator | **No** | free, offline |
-| `@cf/meta/llama-3.2-11b-vision-instruct` **(recommended)** | Yes | free daily allocation |
-| `@cf/llava-hf/llava-1.5-7b-hf` | Yes | free daily allocation |
-| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free daily allocation, then Workers AI rates |
+| MVP Simulator *(default)* | **No** | free, offline |
+| `@cf/llava-hf/llava-1.5-7b-hf` **(recommended)** | Yes | free daily allocation |
+| `@cf/meta/llama-3.2-11b-vision-instruct` | Yes | free allocation, one-time licence acceptance |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free allocation, one-time licence acceptance |
+| `openai:gpt-4.1-mini` | Yes | **your own OpenAI key** |
+| `openai:gpt-4o` | Yes | **your own OpenAI key** |
 | `@cf/qwen/qwen3.8-27b` | Yes | **paid** — Workers Paid plan or AI Gateway credits |
 | `openai/gpt-4.1-mini` | Yes | **paid** — AI Gateway credits |
+
+**Using your own OpenAI key.** The key is stored as a **Worker secret**, never in the
+database and never returned to a browser:
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+```
+
+…or Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add → type
+**Secret** → name `OPENAI_API_KEY`. Admin shows only whether it is configured.
+
+This application has **no authentication**: anyone with the URL can use it, and therefore
+anyone with the URL can spend against that key. Set a spending limit on the OpenAI side. A
+key accepted through a form and stored in the database would be worse — it could be taken,
+not merely spent.
+
+**Licence-gated models.** The Llama models require a one-time acceptance of Meta's Community
+License, sent as the literal prompt `agree`. That acceptance also represents that you are
+**not domiciled in the European Union**, so the app never sends it automatically: Admin shows
+both documents and keeps the button disabled until a box is ticked. LLaVA carries no such
+restriction, which is why it is the recommended default.
+
+**Testing a model.** Admin → Recognition provider → *Test on a sample image* runs the chosen
+model against a demo price list through the real `/api/recognise` path and writes the whole
+exchange to a call log — HTTP status, elapsed time, every detection with its matched SKU and
+confidence, and the raw model response. **Deployment configuration** on the same screen
+reports what is actually bound: `env.AI`, `env.DB`, the AI Gateway id, and whether the
+OpenAI key is set.
 
 Workers AI includes **10,000 Neurons per day at no charge** on both the Free and Paid plans.
 Models marked *free allocation* run inside it; the frontier and third-party models fail with
