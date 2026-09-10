@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 96 unit/integration tests (node:test, no browser needed)
+npm test        # 124 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -140,7 +140,7 @@ public/
     main.js                      router, app shell, event delegation
     config.js                    every business threshold and weight (data-driven)
     seed.js                      deterministic demo dataset
-    store.js                     persistence + mutations (localStorage today)
+    store.js                     loads from /api/data, writes through /api/mutations
     lib/                         stats, dates, csv, formatting, deterministic RNG
     services/                    all business logic — pure, framework-free, unit-tested
       priceRuleService.js        effective-rule resolution + overlap validation
@@ -150,11 +150,14 @@ public/
       analyticsService.js        KPIs, matrix, dispersion, moves, field effectiveness
       visitService.js            the field workflow
       imageService.js            acquisition + quality validation
-      recognition/               provider abstraction + MVP simulator
+      recognition/               provider abstraction, simulator + vision models
     ui/                          one module per screen; render + delegated handlers
+shared/
+  schema.js                      D1 tables and columns, declared once for both sides
+  recognition.js                 vision prompt, JSON extraction, SKU matching (pure)
 tests/                           node:test suites
-scripts/                         static server, smoke test, demo image generator
-worker.js                        Cloudflare Worker entry (serves static assets)
+scripts/                         static server, smoke test, seeder, bundler
+worker.js                        Worker entry: static assets + /api routes
 ```
 
 ### Design rules the code follows
@@ -246,13 +249,20 @@ observations over 12 weeks — engineered to show:
 **Admin → Recognition provider** picks the model. The choice is stored in configuration and
 survives a reload.
 
-| Model | Reads the image? | Needs |
+| Model | Reads the image? | Cost |
 |---|---|---|
-| MVP Simulator | **No** | nothing |
-| `@cf/qwen/qwen3.8-27b` | Yes | `[ai]` binding |
-| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | `[ai]` binding |
-| `@cf/meta/llama-3.2-11b-vision-instruct` | Yes | `[ai]` binding |
-| `openai/gpt-4.1-mini` | Yes | `[ai]` binding + AI Gateway with Unified Billing |
+| MVP Simulator | **No** | free, offline |
+| `@cf/meta/llama-3.2-11b-vision-instruct` **(recommended)** | Yes | free daily allocation |
+| `@cf/llava-hf/llava-1.5-7b-hf` | Yes | free daily allocation |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free daily allocation, then Workers AI rates |
+| `@cf/qwen/qwen3.8-27b` | Yes | **paid** — Workers Paid plan or AI Gateway credits |
+| `openai/gpt-4.1-mini` | Yes | **paid** — AI Gateway credits |
+
+Workers AI includes **10,000 Neurons per day at no charge** on both the Free and Paid plans.
+Models marked *free allocation* run inside it; the frontier and third-party models fail with
+a credits error until billing is arranged. The Admin screen marks each model, and the Worker
+turns provider codes into instructions — `2021: Insufficient AI Gateway credits` becomes a
+sentence naming the free models to use instead.
 
 The **simulator does not look at the photograph.** It generates plausible detections from the
 SKU catalogue and the effective price rules, seeded from the image file identity so the same
