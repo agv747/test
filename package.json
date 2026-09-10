@@ -4,20 +4,17 @@
   "private": true,
   "type": "module",
   "description": "Retail Price Intelligence — Singapore. Mobile-first field price capture + manager decision-support.",
+  "//": "The application has NO dependencies: it is static ES modules with no build step, and public/ is served as-is. Nothing is declared here on purpose — a declared dependency means the deploy build runs `npm ci`, and a lockfile that resolves differently on the build machine than on the author's then fails the deploy for reasons unrelated to the app. Local tooling (wrangler, playwright, esbuild) is installed on demand with `npm run toolchain`.",
   "scripts": {
     "build": "echo \"No build step — public/ is served as-is.\"",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "toolchain": "npm install --no-save wrangler playwright esbuild",
+    "dev": "npx wrangler dev",
+    "start": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
     "test": "node --test \"tests/*.test.js\"",
     "serve": "node scripts/static-server.js",
     "smoke": "node scripts/smoke.mjs",
     "bundle": "node scripts/bundle-standalone.mjs",
-    "demo-images": "node scripts/make-demo-images.mjs",
-    "toolchain": "npm install --no-save playwright esbuild"
-  },
-  "//": "The application itself needs no dependencies — it is static ES modules. Playwright (smoke test, demo images) and esbuild (standalone bundle) are installed on demand via `npm run toolchain`, deliberately NOT declared here: a CI or Cloudflare build that runs `npm install` must not spend minutes downloading browser binaries, and must not fail the deploy if that download fails.",
-  "devDependencies": {
-    "wrangler": "^4.0.0"
+    "demo-images": "node scripts/make-demo-images.mjs"
   }
 }
