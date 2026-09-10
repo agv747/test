@@ -18,11 +18,21 @@ npm install
 npm test        # 96 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
-npm run smoke   # end-to-end browser test: full field flow + every manager route
 npm run deploy  # publish to Cloudflare Workers
 ```
 
 No build step. The app is plain ES modules served as static assets by a Cloudflare Worker.
+
+**The application itself has no dependencies.** Two dev tools are installed on demand rather
+than declared in `package.json`, so that a CI or Cloudflare build running `npm install` never
+spends minutes fetching browser binaries — or fails the deploy when that fetch does:
+
+```bash
+npm run toolchain   # installs playwright + esbuild (no-save)
+npm run smoke       # end-to-end browser test: full field flow + every manager route
+npm run bundle      # single self-contained HTML file in dist/
+npm run demo-images # regenerate the sample shelf photos
+```
 
 ### Deploying
 
