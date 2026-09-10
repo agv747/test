@@ -53,13 +53,12 @@ async function downscale(file, maxEdge = 1600, quality = 0.85) {
  * Builds a provider bound to one model id, so each model appears as its own entry in the
  * provider registry and the existing `setActiveProvider` switch keeps working unchanged.
  */
-export function createRemoteProvider({ id, label, kind, description, cost }) {
+export function createRemoteProvider(descriptor) {
+  const { id } = descriptor;
   return {
-    id,
-    label,
-    kind,
-    description,
-    cost,
+    // Carry the whole descriptor so Admin can show tier, cost and licence without a second
+    // lookup, and so a new field on a model needs no change here.
+    ...descriptor,
     reads_image: true,
 
     async analyzePriceImage(image, context) {

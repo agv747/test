@@ -26,7 +26,8 @@ import {
   upsertSql,
 } from './shared/schema.js';
 import { buildSeedData } from './public/app/seed.js';
-import { buildPrompt, parseModelResponse } from './shared/recognition.js';
+import { buildModelInput, buildPrompt, parseModelResponse } from './shared/recognition.js';
+import { RECOGNITION_MODELS } from './public/app/config.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -49,9 +50,15 @@ export default {
 };
 
 async function handleApi(request, env, url) {
-  // Recognition needs the AI binding, not the database.
+  // These need the AI binding, not the database.
   if (url.pathname === '/api/recognise' && request.method === 'POST') {
     return recognise(env, request);
+  }
+  if (url.pathname === '/api/model-licence' && request.method === 'POST') {
+    return acceptModelLicence(env, request);
+  }
+  if (url.pathname === '/api/config' && request.method === 'GET') {
+    return json(describeBindings(env));
   }
   if (!env.DB) return json({ error: 'No database binding configured' }, 503);
 
@@ -126,29 +133,63 @@ async function recognise(env, request) {
 }
 
 /**
- * Cloudflare-hosted vision models take `{ prompt, image }` where image is a base64 string;
- * models routed through AI Gateway take OpenAI-style multimodal `messages`.
+ * Workers AI vision models do not share an input shape, so each model declares its own in
+ * the catalogue. Third-party models additionally route through AI Gateway.
  */
 async function runModel(env, model, prompt, base64) {
-  if (model.startsWith('@cf/')) {
-    return env.AI.run(model, { prompt, image: `data:image/jpeg;base64,${base64}`, max_tokens: 1500 });
+  const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
+  const shape = descriptor?.input ?? (model.startsWith('@cf/') ? 'image_url' : 'messages');
+  const input = buildModelInput(shape, prompt, base64);
+
+  if (model.startsWith('@cf/')) return env.AI.run(model, input);
+  return env.AI.run(model, input, { gateway: { id: env.AI_GATEWAY_ID || 'default' } });
+}
+
+/** What is actually wired up, so Admin can show it instead of guessing. */
+function describeBindings(env) {
+  return {
+    ai_binding: Boolean(env.AI),
+    db_binding: Boolean(env.DB),
+    ai_gateway_id: env.AI_GATEWAY_ID || 'default',
+    seed_token_configured: Boolean(env.SEED_TOKEN),
+    models: RECOGNITION_MODELS.filter((m) => m.reads_image).map((m) => ({
+      id: m.id,
+      label: m.label,
+      tier: m.tier,
+      input: m.input,
+      requires_licence: Boolean(m.licence),
+    })),
+  };
+}
+
+/**
+ * Accepts a model's licence by sending the literal prompt the provider requires.
+ *
+ * This is a legal act — Meta's terms include a representation about where the accepting
+ * party is domiciled — so it is never done automatically as part of a failed call. The
+ * caller must ask for it explicitly, having been shown the terms.
+ */
+async function acceptModelLicence(env, request) {
+  if (!env.AI) return json({ error: 'No AI binding configured' }, 503);
+
+  const { model, confirmed } = (await request.json()) ?? {};
+  const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
+
+  if (!descriptor) return json({ error: `Unknown model: ${model}` }, 400);
+  if (!descriptor.licence) {
+    return json({ error: `${model} does not require a licence acceptance.` }, 400);
   }
-  return env.AI.run(
-    model,
-    {
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-          ],
-        },
-      ],
-      max_tokens: 1500,
-    },
-    { gateway: { id: env.AI_GATEWAY_ID || 'default' } },
-  );
+  if (confirmed !== true) {
+    return json({ error: 'The licence must be confirmed explicitly.' }, 400);
+  }
+
+  try {
+    // The provider gate expects exactly this prompt, once per account per model.
+    const result = await env.AI.run(model, { prompt: 'agree' });
+    return json({ accepted: true, model, licence: descriptor.licence, response: extractText(result) });
+  } catch (err) {
+    return json({ error: explainModelFailure(err, model), raw_error: err.message }, 502);
+  }
 }
 
 /**
@@ -161,6 +202,9 @@ async function runModel(env, model, prompt, base64) {
 export function explainModelFailure(err, model) {
   const message = String(err?.message ?? err ?? '');
 
+  if (/5016|you must submit the prompt/i.test(message)) {
+    return `${model} requires a one-time licence acceptance before first use. Open Admin → Recognition provider, read the licence and acceptable-use policy linked there, and press "Accept licence". Note the terms exclude parties domiciled in the European Union.`;
+  }
   if (/2021|insufficient .*credit/i.test(message)) {
     return `${model} is a paid model: it needs the Workers Paid plan or prepaid AI Gateway credits. Choose a model marked "Free daily allocation" in Admin → Recognition provider — Llama 3.2 11B Vision is the recommended one.`;
   }

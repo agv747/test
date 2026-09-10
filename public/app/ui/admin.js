@@ -4,6 +4,8 @@ import { esc, money, num, pct } from '../lib/format.js';
 import { dataTable, disclaimer, inputField, selectField, strategicPill } from './dom.js';
 import { downloadCsv, parseCsv } from '../lib/csv.js';
 import { listProviders, getActiveProvider, setActiveProvider } from '../services/recognition/provider.js';
+import { RECOGNITION_MODELS } from '../config.js';
+import { DEMO_IMAGES } from '../demoImages.js';
 
 let tab = 'skus';
 
@@ -22,6 +24,18 @@ const TABS = [
 /** Populated asynchronously by mount(); null until the health probe answers. */
 let dbHealth = null;
 let dbMessage = null;
+
+/** Recognition tab state: binding introspection, the last test call, and licence progress. */
+let workerCfg = null;
+let testLog = [];
+let testing = false;
+let licenceModel = null;
+let licenceConfirmed = false;
+let licenceMessage = null;
+
+function log(line) {
+  testLog = [...testLog, `${new Date().toISOString().slice(11, 19)}  ${line}`].slice(-40);
+}
 
 export function render(ctx) {
   return `
@@ -288,6 +302,15 @@ function recognitionTab(ctx) {
           <div class="detection__meta mono xsmall">${esc(p.id)}</div>
           <div class="detection__meta">${esc(p.description ?? '')}</div>
           <div class="detection__meta"><strong>Cost:</strong> ${esc(p.cost ?? '—')}</div>
+          ${p.licence ? `<div class="detection__meta"><strong>Licence:</strong> ${esc(p.licence.name)} — one-time acceptance required</div>` : ''}
+          ${
+            p.reads_image
+              ? `<div class="toolbar" style="margin-top:7px">
+                   <button class="btn btn--sm" data-action="test-model" data-model="${esc(p.id)}" ${testing ? 'disabled' : ''}>▷ Test on a sample image</button>
+                   ${p.licence ? `<button class="btn btn--sm" data-action="show-licence" data-model="${esc(p.id)}">Accept licence…</button>` : ''}
+                 </div>`
+              : ''
+          }
         </div>
       </div>
     </div>`;
@@ -335,7 +358,87 @@ detection = {
     <p class="small">Manual corrections recorded so far:
       <strong>${corrections}</strong> of ${ctx.data.price_observations.length} observations
       (${pct((corrections / total) * 100)}).</p>
+  </div>
+
+  ${licenceModel ? licencePanel() : ''}
+
+  <div class="card">
+    <div class="card__head">
+      <h2>Deployment configuration</h2>
+      <button class="btn btn--sm" data-action="refresh-config">Refresh</button>
+    </div>
+    ${
+      workerCfg
+        ? `<dl style="margin:0">
+             ${bindingRow('AI binding (env.AI)', workerCfg.ai_binding)}
+             ${bindingRow('Database binding (env.DB)', workerCfg.db_binding)}
+             <div class="detection__row"><dt>AI Gateway id</dt><dd class="mono">${esc(workerCfg.ai_gateway_id)}</dd></div>
+             ${bindingRow('Re-seed token configured', workerCfg.seed_token_configured)}
+           </dl>
+           <p class="xsmall muted mt">Without the AI binding only the simulator works. Without the database binding the app falls back to bundled data in each browser.</p>`
+        : '<p class="small muted">No API reachable from this build — recognition models and the database are unavailable, and the simulator is used.</p>'
+    }
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <h2>Call log</h2>
+      <div class="toolbar">
+        <span class="card__sub">Raw request and response from the last test</span>
+        <button class="btn btn--sm" data-action="clear-log" ${testLog.length ? '' : 'disabled'}>Clear</button>
+      </div>
+    </div>
+    <pre class="small mono" style="background:#14181f;color:#cfe0d9;padding:12px;border-radius:var(--radius-sm);overflow-x:auto;max-height:420px;white-space:pre-wrap">${
+      testLog.length ? esc(testLog.join('\n')) : 'No calls yet. Press “Test on a sample image” above to run one model against a demo price list and see exactly what it returns.'
+    }</pre>
   </div>`;
+}
+
+function bindingRow(label, present) {
+  return `<div class="detection__row"><dt>${esc(label)}</dt><dd>${
+    present
+      ? '<span class="pill pill--good">✓ Present</span>'
+      : '<span class="pill pill--risk">▲ Missing</span>'
+  }</dd></div>`;
+}
+
+/**
+ * Licence acceptance is a legal act — Meta's terms carry a representation about where the
+ * accepting party is domiciled — so the terms are shown and a box must be ticked. Nothing
+ * is sent on the user's behalf without that.
+ */
+function licencePanel() {
+  const model = RECOGNITION_MODELS.find((m) => m.id === licenceModel);
+  if (!model?.licence) return '';
+  const l = model.licence;
+
+  return `<div class="modal-backdrop"><div class="modal">
+    <div class="card__head"><h2>${esc(l.name)}</h2>
+      <button class="btn btn--sm" data-action="close-licence">Close</button></div>
+
+    <p class="small">Before <strong>${esc(model.label)}</strong> can be used, the provider requires a one-time acceptance recorded against this Cloudflare account. Read both documents before accepting:</p>
+    <ul class="small">
+      <li><a href="${esc(l.terms)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a></li>
+      <li><a href="${esc(l.policy)}" target="_blank" rel="noopener noreferrer">Acceptable Use Policy</a></li>
+    </ul>
+
+    ${
+      l.eu_excluded
+        ? `<div class="disclaimer" style="background:var(--watch-bg);border-color:var(--watch-border);color:var(--watch)">
+             <strong>!</strong><span>Accepting also represents that you are <strong>not an individual domiciled in, or a company with a principal place of business in, the European Union</strong>. If that is not true of your organisation, do not accept — use LLaVA 1.5 7B instead, which carries no such restriction.</span></div>`
+        : ''
+    }
+
+    <label class="checkbox mt"><input type="checkbox" data-filter="licence-confirm" ${licenceConfirmed ? 'checked' : ''} />
+      I have read both documents and accept them on behalf of this account.</label>
+
+    ${licenceMessage ? `<p class="small mt">${esc(licenceMessage)}</p>` : ''}
+
+    <div class="toolbar mt">
+      <button class="btn btn--primary" data-action="accept-licence" data-model="${esc(model.id)}" ${licenceConfirmed ? '' : 'disabled'}>Accept licence</button>
+      <button class="btn" data-action="close-licence">Cancel</button>
+    </div>
+  </div></div>`;
 }
 
 /* ------------------------------------------------------------------ exports */
@@ -384,6 +487,84 @@ export function onAction(action, el, ctx) {
         console.error(err);
       }
       ctx.render();
+      break;
+    }
+    case 'test-model': {
+      const model = el.dataset.model;
+      testing = true;
+      log(`POST /api/recognise  model=${model}`);
+      ctx.render();
+
+      const skus = ctx.data.skus.map((sku) => ({
+        id: sku.id,
+        name: sku.name,
+        brand_name: ctx.data.brands.find((b) => b.id === sku.brand_id)?.name ?? '',
+        sku_code: sku.sku_code,
+        is_jti: sku.is_jti,
+      }));
+
+      ctx.store
+        .testRecognitionModel(model, DEMO_IMAGES[0].url, skus, ctx.config.currency)
+        .then((result) => {
+          log(`image: ${DEMO_IMAGES[0].file} (${Math.round(result.image_bytes / 1024)} KB)`);
+          log(`HTTP ${result.status} in ${result.elapsed_ms} ms`);
+          if (result.error) {
+            log(`ERROR  ${result.error}`);
+            if (result.raw_error) log(`raw    ${result.raw_error}`);
+          } else {
+            log(`detections: ${result.detections?.length ?? 0}, unmatched: ${result.unmatched ?? 0}`);
+            for (const d of result.detections ?? []) {
+              log(`  ${(d.sku_candidate ?? 'UNMATCHED').padEnd(32)} ${String(d.price_candidate).padStart(7)}  conf ${d.confidence}`);
+            }
+            log('--- raw model response ---');
+            log(result.raw_response ?? '(empty)');
+          }
+        })
+        .catch((err) => log(`ERROR  ${err.message}`))
+        .finally(() => {
+          testing = false;
+          ctx.render();
+        });
+      break;
+    }
+    case 'clear-log':
+      testLog = [];
+      ctx.render();
+      break;
+    case 'refresh-config':
+      workerCfg = null;
+      ctx.render();
+      break;
+    case 'show-licence':
+      licenceModel = el.dataset.model;
+      licenceConfirmed = false;
+      licenceMessage = null;
+      ctx.render();
+      break;
+    case 'close-licence':
+      licenceModel = null;
+      licenceConfirmed = false;
+      ctx.render();
+      break;
+    case 'accept-licence': {
+      const model = el.dataset.model;
+      el.disabled = true;
+      licenceMessage = 'Sending acceptance…';
+      log(`POST /api/model-licence  model=${model}`);
+      ctx.render();
+      ctx.store
+        .acceptModelLicence(model)
+        .then(() => {
+          licenceMessage = 'Accepted. The model can now be used — run a test to confirm.';
+          log('licence accepted');
+          licenceModel = null;
+          ctx.render();
+        })
+        .catch((err) => {
+          licenceMessage = err.message;
+          log(`ERROR  ${err.message}`);
+          ctx.render();
+        });
       break;
     }
     case 'refresh-health':
@@ -540,6 +721,11 @@ function runExport(kind, ctx) {
 export function onChange(target, ctx) {
   const d = target.dataset;
 
+  if (d.filter === 'licence-confirm') {
+    licenceConfirmed = target.checked;
+    ctx.render();
+    return true;
+  }
   if (d.filter === 'sku-strategic') {
     ctx.store.updateSku(d.sku, {
       is_strategic: target.checked,
@@ -599,6 +785,12 @@ export function onChange(target, ctx) {
 }
 
 export function mount(ctx, root) {
+  if (tab === 'recognition' && workerCfg === null) {
+    ctx.store.workerConfig().then((cfg) => {
+      workerCfg = cfg ?? { ai_binding: false, db_binding: false, ai_gateway_id: '—', models: [] };
+      ctx.render();
+    });
+  }
   if (tab === 'database' && dbHealth === null) {
     ctx.store.databaseHealth().then((health) => {
       dbHealth = health ?? { ok: false, seeded: false, counts: {} };

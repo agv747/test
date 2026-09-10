@@ -29,8 +29,24 @@ export function registerProvider(provider) {
   return provider;
 }
 
+/**
+ * Registered providers with the descriptive metadata Admin renders — tier, cost, licence
+ * and whether the provider looks at the image at all. Returning only id/label/kind once
+ * silently hid the licence and test controls.
+ */
 export function listProviders() {
-  return [...providers.values()].map((p) => ({ id: p.id, label: p.label, kind: p.kind }));
+  return [...providers.values()].map((p) => ({
+    id: p.id,
+    label: p.label,
+    kind: p.kind,
+    tier: p.tier ?? 'free',
+    input: p.input ?? null,
+    reads_image: p.reads_image !== false,
+    recommended: Boolean(p.recommended),
+    description: p.description ?? '',
+    cost: p.cost ?? '',
+    licence: p.licence ?? null,
+  }));
 }
 
 export function setActiveProvider(id) {

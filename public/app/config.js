@@ -108,10 +108,17 @@ export const RECOGNITION_MODELS = [
     label: 'Llama 3.2 11B Vision',
     kind: 'workers-ai',
     tier: 'free',
-    recommended: true,
+    input: 'image_url',
+    licence: {
+      name: 'Llama 3.2 Community License',
+      terms: 'https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE',
+      policy: 'https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/USE_POLICY.md',
+      /** Meta's terms exclude the EU for this model; accepting asserts you are outside it. */
+      eu_excluded: true,
+    },
     reads_image: true,
     description:
-      'Cloudflare-hosted vision model. Reads the price list directly and is the recommended starting point — it runs inside the free daily allocation.',
+      'Cloudflare-hosted vision model, stronger than LLaVA on a dense list. Runs inside the free daily allocation, but Meta requires a one-time licence acceptance before first use.',
     cost: 'Free daily allocation (10,000 Neurons/day)',
   },
   {
@@ -119,9 +126,11 @@ export const RECOGNITION_MODELS = [
     label: 'LLaVA 1.5 7B',
     kind: 'workers-ai',
     tier: 'free',
+    recommended: true,
+    input: 'image_bytes',
     reads_image: true,
     description:
-      'Smaller image-to-text model. Cheapest in Neurons, so it stretches the free allocation furthest, but less reliable on a dense price list.',
+      'Smaller image-to-text model with no licence click-through, so it works immediately. Cheapest in Neurons; less reliable than Llama on a dense price list.',
     cost: 'Free daily allocation (10,000 Neurons/day)',
   },
   {
@@ -129,6 +138,13 @@ export const RECOGNITION_MODELS = [
     label: 'Llama 4 Scout 17B',
     kind: 'workers-ai',
     tier: 'free',
+    input: 'messages',
+    licence: {
+      name: 'Llama 4 Community License',
+      terms: 'https://github.com/meta-llama/llama-models/blob/main/models/llama4/LICENSE',
+      policy: 'https://github.com/meta-llama/llama-models/blob/main/models/llama4/USE_POLICY.md',
+      eu_excluded: true,
+    },
     reads_image: true,
     description:
       'Natively multimodal mixture-of-experts model. Stronger than Llama 3.2, and heavier — it consumes the daily allocation faster.',
@@ -139,6 +155,7 @@ export const RECOGNITION_MODELS = [
     label: 'Qwen 3.8 27B',
     kind: 'workers-ai',
     tier: 'paid',
+    input: 'messages',
     reads_image: true,
     description:
       'The strongest Cloudflare-hosted option for a dense price list. A frontier model: it needs the Workers Paid plan or prepaid AI Gateway credits.',
@@ -149,6 +166,7 @@ export const RECOGNITION_MODELS = [
     label: 'GPT-4.1 mini (via AI Gateway)',
     kind: 'gateway',
     tier: 'paid',
+    input: 'messages',
     reads_image: true,
     description:
       'Third-party model routed through AI Gateway. Needs a gateway with Unified Billing and prepaid credits; Cloudflare holds the provider credentials, so no API key is stored here.',
@@ -162,7 +180,7 @@ export const DEFAULT_RECOGNITION_MODEL = 'mock-simulator';
  * The model to suggest when someone wants real recognition without arranging billing.
  * Kept separate from the default so a fresh install still starts on the simulator.
  */
-export const RECOMMENDED_FREE_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
+export const RECOMMENDED_FREE_MODEL = '@cf/llava-hf/llava-1.5-7b-hf';
 
 export const PRICE_POSITION_STATUS = {
   WITHIN: 'Within Recommended Range',
