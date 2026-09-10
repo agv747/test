@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 96 unit/integration tests (node:test, no browser needed)
+npm test        # 124 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -140,7 +140,7 @@ public/
     main.js                      router, app shell, event delegation
     config.js                    every business threshold and weight (data-driven)
     seed.js                      deterministic demo dataset
-    store.js                     persistence + mutations (localStorage today)
+    store.js                     loads from /api/data, writes through /api/mutations
     lib/                         stats, dates, csv, formatting, deterministic RNG
     services/                    all business logic — pure, framework-free, unit-tested
       priceRuleService.js        effective-rule resolution + overlap validation
@@ -150,11 +150,14 @@ public/
       analyticsService.js        KPIs, matrix, dispersion, moves, field effectiveness
       visitService.js            the field workflow
       imageService.js            acquisition + quality validation
-      recognition/               provider abstraction + MVP simulator
+      recognition/               provider abstraction, simulator + vision models
     ui/                          one module per screen; render + delegated handlers
+shared/
+  schema.js                      D1 tables and columns, declared once for both sides
+  recognition.js                 vision prompt, JSON extraction, SKU matching (pure)
 tests/                           node:test suites
-scripts/                         static server, smoke test, demo image generator
-worker.js                        Cloudflare Worker entry (serves static assets)
+scripts/                         static server, smoke test, seeder, bundler
+worker.js                        Worker entry: static assets + /api routes
 ```
 
 ### Design rules the code follows
