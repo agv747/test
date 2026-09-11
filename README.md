@@ -342,8 +342,12 @@ the default:
 - **List** — the cards a TME confirms and submits. Every number is on them.
 - **Shelf schematic** — the same detections arranged as a shelf: every pack that was counted
   drawn side by side, a price ticket under each product, one row per shelf. Tapping a product
-  opens that detection for correction. A whole visit can be taken in at a glance instead of
-  scrolled through.
+  opens the correction form **centred over the shelf**, on the app's existing
+  `.modal-backdrop > .modal` convention: the schematic has no card to expand, and pushing a
+  form in among the packs would break the shelf shape the view exists to show — on a phone it
+  would open below the fold, out of sight of the pack just tapped. It is the same form the
+  list uses, and it closes on Done, Escape, or a click away from it. A whole visit can be
+  taken in at a glance instead of scrolled through.
 
 The pack face carries the SKU name, whether it is JTI or a competitor, and a colour for its
 price position — within, above or below the recommended range, or competitive position at

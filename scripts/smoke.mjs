@@ -198,19 +198,52 @@ try {
   );
   await shot('05b-shelf-schematic');
 
-  // A product on the shelf is the way into the correction form for its own detection.
-  const facingDraft = await page.locator('.block').first().getAttribute('data-draft');
-  const openBeforeTap = await page.locator('.detection__detail').count();
+  // A product on the shelf opens the correction form over the shelf, not below it.
+  const productDraft = await page.locator('.block').first().getAttribute('data-draft');
+  check((await page.locator('[data-modal]').count()) === 0, 'no dialog is open until a product is tapped');
   await page.locator('.block').first().click();
   await wait(400);
+
+  check((await page.locator('[data-modal]').count()) === 1, 'tapping a product opens a dialog');
+  const dialogText = await page.locator('.modal').innerText();
+  check(/Confirmed price/i.test(dialogText), 'the dialog carries the correction form');
+  check(/Detected price \(original\)/i.test(dialogText), 'and the detail the list card shows');
   check(
-    (await page.locator(`[id="draft-${facingDraft}"] .detection__detail`).count()) === 1,
-    'tapping a product opens that detection for correction',
+    (await page.locator('.modal select[data-edit="sku"]').getAttribute('data-draft')) === productDraft,
+    'the dialog is editing the product that was tapped',
   );
+
+  // Centred over the page, not appended under the shelf.
+  const centred = await page.locator('.modal').evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return {
+      inViewport: box.top >= 0 && box.bottom <= window.innerHeight,
+      offCentre: Math.abs((box.top + box.bottom) / 2 - window.innerHeight / 2),
+    };
+  });
+  check(centred.inViewport, 'the dialog is on screen without scrolling');
+  check(centred.offCentre < 40, `the dialog is centred (${Math.round(centred.offCentre)}px off)`);
+  await shot('05d-schematic-editor');
+
+  // Correcting from the dialog changes the shelf behind it, and the dialog stays open.
+  await page.fill('.modal input[data-edit="price"]', '19.95');
+  await page.dispatchEvent('.modal input[data-edit="price"]', 'change');
+  await wait(400);
+  check((await page.locator('[data-modal]').count()) === 1, 'the dialog stays open after a correction');
   check(
-    (await page.locator('.detection__detail').count()) >= openBeforeTap,
-    'tapping a product does not close anything already open',
+    (await page.locator(`.block[data-draft="${productDraft}"] .ticket__price`).innerText()).includes('19.95'),
+    'the corrected price shows on the shelf behind the dialog',
   );
+
+  await page.keyboard.press('Escape');
+  await wait(350);
+  check((await page.locator('[data-modal]').count()) === 0, 'Escape closes the dialog');
+
+  await page.locator('.block').first().click();
+  await wait(350);
+  await page.locator('[data-modal]').click({ position: { x: 5, y: 5 } });
+  await wait(350);
+  check((await page.locator('[data-modal]').count()) === 0, 'clicking away from the dialog closes it');
 
   await page.click('[data-action="set-results-view"][data-view="list"]');
   await wait(300);

@@ -53,8 +53,8 @@ const state = {
   expanded: new Set(),
   /** Results view: the working list, or the shelf drawn as a schematic. */
   resultsView: 'list',
-  /** Set when a facing is tapped, so mount() can scroll that card into view once. */
-  focusDraftId: null,
+  /** Open correction dialog, used from the schematic where there is no card to expand. */
+  editingDraftId: null,
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
   error: null,
 };
@@ -69,7 +69,7 @@ export function reset() {
   state.processingStep = 0;
   state.expanded = new Set();
   state.resultsView = 'list';
-  state.focusDraftId = null;
+  state.editingDraftId = null;
   state.action = { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] };
   state.error = null;
 }
@@ -325,7 +325,60 @@ function renderResultsStep(ctx) {
       <button class="btn" data-action="back-to-acquire">‹ Add another image</button>
       <div class="spacer"></div>
       <button class="btn btn--primary" data-action="to-action">Record field action →</button>
-    </div>`;
+    </div>
+    ${editorDialog(ctx)}`;
+}
+
+/**
+ * The correction form as a dialog over the shelf.
+ *
+ * On the schematic there is nothing to expand in place: the packs are laid out as a shelf,
+ * and pushing a form in among them would break the very shape the view exists to show — and
+ * on a phone it would open below the fold, out of sight of the pack just tapped. So the same
+ * form opens centred, over the shelf, with the pack still visible behind it.
+ *
+ * It is the same `detectionDetail` the list uses. One form, one set of fields, one place to
+ * change them.
+ */
+function editorDialog(ctx) {
+  const draft = state.drafts.find((d) => d.draft_id === state.editingDraftId);
+  if (!draft) return '';
+
+  const skuOptions = ctx.data.skus
+    .filter((s) => s.active !== false)
+    .map(
+      (s) =>
+        `<option value="${esc(s.id)}"${s.id === draft.sku_id ? ' selected' : ''}>${esc(s.name)}${s.is_jti ? ' (JTI)' : ' (Competitor)'}</option>`,
+    )
+    .join('');
+
+  // The app's existing dialog convention: a fixed backdrop wrapping a centred panel, as
+  // used by Price Rules and Admin.
+  return `<div class="modal-backdrop" data-modal>
+    <div class="modal" role="dialog" aria-modal="true" tabindex="-1"
+      aria-label="${esc(`Correct ${draft.sku?.name ?? 'unrecognised item'}`)}">
+      <div class="modal__head">
+        <div>
+          <div class="modal__title">${esc(draft.sku?.name ?? 'Unrecognised item')}
+            ${strategicPill(draft.sku)}
+            ${draft.manual_correction ? '<span class="tag">corrected</span>' : ''}</div>
+          <div class="detection__meta">${esc(draft.sku?.is_jti ? 'JTI' : draft.brand_candidate ?? 'Competitor')}
+            · ${esc(draft.raw_text ?? '')}</div>
+        </div>
+        <button class="modal__close" data-action="close-editor" aria-label="Close">✕</button>
+      </div>
+      <div class="modal__summary">
+        ${draft.is_jti ? statusPill(draft.evaluation?.status) : '<span class="pill pill--none">Competitor observation</span>'}
+        ${confidenceMeter(draft.recognition_confidence, ctx.config.confidence_review_threshold)}
+        <span class="modal__price">${money(draft.confirmed_price)}</span>
+      </div>
+      ${detectionDetail(draft, skuOptions)}
+      <div class="toolbar modal__foot">
+        <div class="spacer"></div>
+        <button class="btn btn--primary" data-action="close-editor">Done</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /**
@@ -618,13 +671,37 @@ export function mount(ctx, root) {
     search.setSelectionRange(search.value.length, search.value.length);
   }
 
-  if (state.focusDraftId) {
-    // Draft ids contain a colon, so match on the attribute rather than as an id selector.
-    const card = root.querySelector(`[id="draft-${state.focusDraftId}"]`);
-    state.focusDraftId = null;
-    card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
+  mountEditorDialog(ctx, root);
 }
+
+/**
+ * Closing the correction dialog by clicking away from it or pressing Escape.
+ *
+ * Both are bound to the dialog's own elements, which the render replaces every time, so
+ * there is nothing to remove and no listener can accumulate. The backdrop compares the event
+ * target to itself rather than relying on the delegated handler, which would treat any click
+ * inside the dialog as a click on the backdrop.
+ */
+function mountEditorDialog(ctx, root) {
+  const modal = root.querySelector('[data-modal]');
+  if (!modal) return;
+
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeEditor(ctx);
+  });
+  modal.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeEditor(ctx);
+  });
+
+  // Focus moves into the dialog so Escape reaches it and a screen reader announces it.
+  // Every correction re-renders the page and replaces the dialog, which leaves focus on
+  // <body> and Escape going nowhere — so focus is restored whenever it has fallen outside.
+  // Nothing is stolen mid-edit: corrections are committed on `change`, after the field has
+  // already been left.
+  const dialog = modal.querySelector('.modal');
+  if (dialog && !modal.contains(document.activeElement)) dialog.focus();
+}
+
 
 export function onAction(action, el, ctx) {
   switch (action) {
@@ -674,14 +751,15 @@ export function onAction(action, el, ctx) {
       state.resultsView = el.dataset.view;
       ctx.render();
       break;
-    case 'focus-detection': {
-      // A facing in the schematic is a way into the correction form for that detection.
-      const id = el.dataset.draft;
-      state.expanded.add(id);
-      state.focusDraftId = id;
+    case 'focus-detection':
+      // A pack on the schematic opens the correction form over the shelf, rather than
+      // expanding a card somewhere below the fold.
+      state.editingDraftId = el.dataset.draft;
       ctx.render();
       break;
-    }
+    case 'close-editor':
+      closeEditor(ctx);
+      break;
     case 'use-alternative': {
       applyEdit(el.dataset.draft, { sku_id: el.dataset.sku }, ctx);
       break;
@@ -830,6 +908,12 @@ function attachCompetitorNames(drafts, data) {
       ? (data.skus.find((s) => s.id === d.competitor_sku_id_snapshot)?.name ?? null)
       : null,
   }));
+}
+
+function closeEditor(ctx) {
+  if (!state.editingDraftId) return;
+  state.editingDraftId = null;
+  ctx.render();
 }
 
 function applyEdit(draftId, patch, ctx) {
