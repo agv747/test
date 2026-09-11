@@ -519,6 +519,56 @@ textarea { min-height: 74px; resize: vertical; }
 .conf--risk { border-color: var(--risk-border); background: var(--risk-bg); }
 .conf--risk .conf__pct { color: var(--risk); }
 
+/* --------------------------------------------------------------------- modal */
+
+/* The correction form over the shelf, on the app's existing .modal-backdrop > .modal
+   convention. On the schematic there is no card to expand: pushing a form in among the packs
+   would break the shelf shape the view exists to show, and on a phone it would open below
+   the fold, away from the pack just tapped. */
+.modal:focus { outline: none; }
+.modal:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+
+.modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.modal__title { font-weight: 650; font-size: 1.02rem; }
+.modal__close {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  width: 30px;
+  height: 30px;
+  flex: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.modal__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.modal__price {
+  margin-left: auto;
+  font-size: 1.2rem;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+/* The form is the list's own detail block, so it arrives with a card's framing it does not
+   need here. */
+.modal .detection__detail {
+  background: none;
+  border-top: 1px solid var(--border);
+  padding: 11px 0 0;
+}
+.modal__foot { margin-top: 12px; }
+
 /* ------------------------------------------------------------- shelf schematic */
 
 .schematic__source { font-size: 0.76rem; color: var(--text-muted); margin-bottom: 6px; }
