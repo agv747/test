@@ -519,144 +519,133 @@ textarea { min-height: 74px; resize: vertical; }
 .conf--risk { border-color: var(--risk-border); background: var(--risk-bg); }
 .conf--risk .conf__pct { color: var(--risk); }
 
-/* ---------------------------------------------------------------- shelf overlay */
+/* ------------------------------------------------------------- shelf schematic */
 
-.ar { position: relative; }
-.ar__frame { position: relative; display: inline-block; width: 100%; line-height: 0; }
-.ar__img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: var(--radius-sm);
+.schematic__source { font-size: 0.76rem; color: var(--text-muted); margin-bottom: 6px; }
+
+.schematic__cabinet {
   background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px 10px 4px;
 }
-.ar__layer { position: absolute; inset: 0; }
 
-/* A label that sits ABOVE the price it marks and points down at it. Drawn over the price,
-   a rectangle would hide the very ticket the TME is being asked to confirm. */
-.ar__pin {
-  position: absolute;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  /* Positioned by the point it aims at: the body sits above, the stem reaches down to it. */
-  transform: translate(-50%, -100%);
-  display: block;
-  z-index: 1;
-}
-.ar__pin:focus-visible { outline: 3px solid var(--info); outline-offset: 3px; border-radius: 6px; }
-.ar__pin--excluded { opacity: 0.45; }
+.rail { margin-bottom: 10px; }
+.rail:last-child { margin-bottom: 6px; }
 
-/* One line, because shelf rows are closer together than a two-line label is tall: stacked
-   labels covered each other and the top one could not even be tapped. */
-.ar__tag {
+.rail__head {
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  line-height: 1.35;
-  font-size: 0.67rem;
-  padding: 2px 7px;
-  border-radius: 5px;
-  border: 1.5px solid var(--none);
-  background: rgba(12, 15, 20, 0.86);
-  color: #fff;
-  white-space: nowrap;
-  text-align: left;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
-.ar__price { font-weight: 700; font-variant-numeric: tabular-nums; }
-.ar__name {
-  max-width: 108px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 0.63rem;
-  opacity: 0.93;
-}
-.ar__conf { font-variant-numeric: tabular-nums; font-size: 0.63rem; }
+.rail__name { font-weight: 650; color: var(--text); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.68rem; }
+.rail__price { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* The stem, ending in a dot exactly on the price it was read from. */
-.ar__stem {
-  display: block;
-  width: 0;
-  height: 9px;
-  margin: 0 auto;
-  border-left: 2px solid var(--none);
-  position: relative;
+/* Facings sit on the rail, tickets hang off its front edge — the shape of the real thing. */
+.rail__facings {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.ar__stem::after {
-  content: '';
-  position: absolute;
-  left: -4px;
-  bottom: -4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--none);
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+.rail__shelf {
+  height: 5px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(var(--border-strong), var(--none-bg));
+  margin-top: -2px;
 }
 
-.ar__pin--good .ar__tag, .ar__pin--good .ar__stem { border-color: var(--good); }
-.ar__pin--good .ar__stem::after { background: var(--good); }
-.ar__pin--good .ar__conf { color: #86e0ac; }
-.ar__pin--watch .ar__tag, .ar__pin--watch .ar__stem { border-color: var(--watch); }
-.ar__pin--watch .ar__stem::after { background: var(--watch); }
-.ar__pin--watch .ar__conf { color: #f4c97a; }
-.ar__pin--risk .ar__tag, .ar__pin--risk .ar__stem { border-color: var(--risk); }
-.ar__pin--risk .ar__stem::after { background: var(--risk); }
-.ar__pin--risk .ar__conf { color: #f6a49e; }
-.ar__pin--manual .ar__tag { border-width: 2.5px; }
-
-.ar__tools {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  z-index: 3;
+.facing {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: center;
+  gap: 3px;
+  width: 88px;
 }
-.ar__tool {
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: rgba(12, 15, 20, 0.78);
-  color: #fff;
-  font-size: 0.72rem;
-  padding: 5px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ar__tool--on { background: var(--brand-2); border-color: #fff; }
+.facing--excluded { opacity: 0.45; }
+.facing:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; border-radius: 6px; }
 
-/* Placing mode: a touch that starts on a marker moves it instead of scrolling the page.
-   Outside this mode markers must not swallow swipes — they cover most of the photo. */
-.ar--placing .ar__pin { touch-action: none; cursor: grab; }
-.ar--placing .ar__tag { border-style: dashed; }
-.ar__pin--dragging { cursor: grabbing; opacity: 0.88; z-index: 4; }
-.ar__pin:hover, .ar__pin:focus-visible { z-index: 3; }
-
-.ar__legend { margin-top: 10px; }
-.ar__keys { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.7rem; margin-bottom: 6px; }
-.ar__key--good { color: var(--good); }
-.ar__key--watch { color: var(--watch); }
-.ar__key--risk { color: var(--risk); }
-.ar__legend p { margin: 3px 0 0; }
-
-/* Full screen is a fixed layer rather than the Fullscreen API, which iOS Safari does not
-   grant to anything but a <video>. */
-.ar--full {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: #0b0d11;
+/* Standardised packaging carries no brand colours, so neither does the pack face: the only
+   colour on it is the price position, which is the thing being judged. */
+.pack {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid var(--border-strong);
+  border-top: 4px solid var(--none);
+  border-radius: 3px 3px 0 0;
+  background: #fff;
+  padding: 5px 5px 4px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  gap: 2px;
+  position: relative;
+  text-align: center;
 }
-.ar--full .ar__frame { width: auto; max-width: 100%; max-height: 100%; }
-.ar--full .ar__img { max-height: calc(100vh - 12px); max-width: 100%; width: auto; border-radius: 0; }
+.pack--good { border-top-color: var(--good); background: var(--good-bg); }
+.pack--watch { border-top-color: var(--watch); background: var(--watch-bg); }
+.pack--risk { border-top-color: var(--risk); background: var(--risk-bg); }
+.pack--none { border-top-color: var(--none); background: var(--none-bg); }
+
+.pack__owner {
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+.pack--jti .pack__owner { color: var(--brand-2); }
+.pack__name {
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.pack__strategic { position: absolute; top: 2px; right: 4px; font-size: 0.62rem; color: #6b21a8; }
+
+.ticket {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: #fff;
+  padding: 2px 4px;
+  box-shadow: var(--shadow);
+}
+.ticket__price { font-weight: 700; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.ticket__conf { font-size: 0.6rem; font-variant-numeric: tabular-nums; }
+.ticket__conf--good { color: var(--good); }
+.ticket__conf--watch { color: var(--watch); }
+.ticket__conf--risk { color: var(--risk); }
+.ticket--good { border-color: var(--good-border); }
+.ticket--watch { border-color: var(--watch-border); }
+.ticket--risk { border-color: var(--risk-border); }
+
+.schematic__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.7rem;
+  margin: 10px 0 6px;
+  color: var(--text-muted);
+}
+.legend-key--good { color: var(--good); }
+.legend-key--watch { color: var(--watch); }
+.legend-key--risk { color: var(--risk); }
 
 .decision {
   border-radius: var(--radius);

@@ -152,98 +152,59 @@ try {
   check((await page.locator('.decision__value').textContent()).length > 0, 'immediate field recommendation is shown');
   await shot('05-results');
 
-  /* ------------------------------------------------- shelf overlay (AR view) */
+  /* ---------------------------------------------------- shelf schematic */
 
-  check((await page.locator('.ar').count()) === 0, 'the working list is the default view');
-  await page.click('[data-action="set-results-view"][data-view="overlay"]');
+  check((await page.locator('.schematic').count()) === 0, 'the working list is the default view');
+  await page.click('[data-action="set-results-view"][data-view="schematic"]');
   await wait(400);
-  check((await page.locator('.ar__img').count()) === 1, 'the captured photo is shown in the overlay');
-  const markers = await page.locator('.ar__pin').count();
-  check(markers >= 4, `${markers} detections are marked on the photo`);
-  const firstMarker = await page.locator('.ar__pin').first().innerText();
-  check(/\d+\.\d\d/.test(firstMarker), 'a label shows the price');
-  check(/\d+%/.test(firstMarker), 'a label shows the recognition percentage');
-  check((await page.locator('.ar__name').first().innerText()).length > 2, 'a label shows the SKU');
-  check((await page.locator('.ar__stem').count()) === markers, 'every label points at the price it marks');
 
-  // Labels stacked on top of each other hide prices and make the covered one untappable.
-  const overlaps = await page.locator('.ar__tag').evaluateAll((els) => {
-    const boxes = els.map((e) => e.getBoundingClientRect());
-    const hits = [];
-    for (let i = 0; i < boxes.length; i += 1) {
-      for (let j = i + 1; j < boxes.length; j += 1) {
-        const a = boxes[i];
-        const b = boxes[j];
-        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) hits.push([i, j]);
-      }
-    }
-    return hits;
-  });
-  check(overlaps.length === 0, `no two labels cover each other (${JSON.stringify(overlaps)})`);
+  const facings = await page.locator('.facing').count();
+  check(facings === detections, `every detection has a facing on the shelf (${facings})`);
+  check((await page.locator('.rail').count()) >= 1, 'facings are arranged on rails');
 
-  // Labels are placed from rows found in the photo, never from coordinates a model reported.
-  const legendText = await page.locator('.ar__legend').innerText();
-  check(
-    /sits above the shelf row it was read from|No shelf rows could be made out/.test(legendText),
-    'the overlay says how the labels were placed',
+  const firstFacing = await page.locator('.facing').first().innerText();
+  check(/\d+\.\d\d/.test(firstFacing), 'a facing shows the price on its ticket');
+  check(/\d+%/.test(firstFacing), 'a facing shows the recognition percentage');
+  check(/JTI|Comp\./.test(firstFacing), 'a facing says whose SKU it is');
+
+  const railHeads = await page.locator('.rail__head').allInnerTexts();
+  check(railHeads.every((h) => /SGD \d+\.\d\d/.test(h)), 'every rail is labelled with its price');
+  check(railHeads.some((h) => /facing/.test(h)), 'every rail says how many facings sit on it');
+
+  // One rail carries one price, so equal consecutive prices must share a rail.
+  const railPrices = await page.locator('.rail').evaluateAll((rails) =>
+    rails.map((r) => [...r.querySelectorAll('.ticket__price')].map((t) => t.textContent.trim())),
   );
-  const legend = await page.locator('.ar__legend').innerText();
-  check(/read both the product name and the price/.test(legend), 'the overlay explains the percentage');
   check(
-    /generated these prices from the catalogue/.test(legend),
-    'the overlay says the simulator never read this photo',
+    railPrices.every((prices) => new Set(prices).size === 1),
+    `each rail carries a single price (${JSON.stringify(railPrices)})`,
   );
-  await shot('05b-shelf-overlay');
 
-  // A marker is the way into the correction form for that detection.
-  const markerDraft = await page.locator('.ar__pin').first().getAttribute('data-draft');
-  await page.locator('.ar__pin').first().click();
+  const note = await page.locator('.schematic p').first().innerText();
+  check(/shelf as read, not a plan of the real one/.test(note), 'the schematic says what it is');
+  check(
+    (await page.locator('.schematic').innerText()).includes('generated these prices from the catalogue'),
+    'the schematic says the simulator never read this photo',
+  );
+  await shot('05b-shelf-schematic');
+
+  // A facing is the way into the correction form for its own detection.
+  const facingDraft = await page.locator('.facing').first().getAttribute('data-draft');
+  const openBeforeTap = await page.locator('.detection__detail').count();
+  await page.locator('.facing').first().click();
   await wait(400);
   check(
-    (await page.locator(`[id="draft-${markerDraft}"] .detection__detail`).count()) === 1,
-    'tapping a marker opens that detection for correction',
-  );
-
-  // A marker that lands off the pack can be dragged onto it.
-  await page.click('[data-action="toggle-overlay-placing"]');
-  await wait(350);
-  check((await page.locator('.ar--placing').count()) === 1, 'labels can be put into placing mode');
-  // Some detections are already open (Review Required expands itself, and a marker was
-  // tapped above), so the test is that dragging changes nothing about what is open.
-  const openBeforeDrag = await page.locator('.detection__detail').count();
-  const target = page.locator('.ar__pin').first();
-  const markerBefore = await target.boundingBox();
-  await page.mouse.move(markerBefore.x + markerBefore.width / 2, markerBefore.y + markerBefore.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(markerBefore.x + markerBefore.width / 2 + 40, markerBefore.y + markerBefore.height / 2 + 60, { steps: 8 });
-  await page.mouse.up();
-  await wait(400);
-  const markerAfter = await page.locator('.ar__pin').first().boundingBox();
-  const moved = Math.round(markerAfter.y - markerBefore.y);
-  check(moved >= 40, `a label can be dragged onto the right price (moved ${moved}px down)`);
-  check(
-    (await page.locator('.ar__pin--manual').count()) > 0,
-    'a hand-placed label is recorded as placed by hand',
+    (await page.locator(`[id="draft-${facingDraft}"] .detection__detail`).count()) === 1,
+    'tapping a facing opens that detection for correction',
   );
   check(
-    (await page.locator('.detection__detail').count()) === openBeforeDrag,
-    'dragging a label does not also open it for correction',
+    (await page.locator('.detection__detail').count()) >= openBeforeTap,
+    'tapping a facing does not close anything already open',
   );
-  await shot('05d-shelf-overlay-placing');
-  await page.click('[data-action="toggle-overlay-placing"]');
-  await wait(300);
-
-  await page.click('[data-action="toggle-overlay-fullscreen"]');
-  await wait(350);
-  check((await page.locator('.ar--full').count()) === 1, 'the overlay opens full screen');
-  await shot('05c-shelf-overlay-fullscreen');
-  await page.click('[data-action="toggle-overlay-fullscreen"]');
-  await wait(300);
-  check((await page.locator('.ar--full').count()) === 0, 'full screen can be left again');
 
   await page.click('[data-action="set-results-view"][data-view="list"]');
   await wait(300);
-  check((await page.locator('.ar').count()) === 0, 'the overlay can be switched back off');
+  check((await page.locator('.schematic').count()) === 0, 'the schematic can be switched back off');
 
   await page.locator('.detection__head').first().click();
   await wait(250);

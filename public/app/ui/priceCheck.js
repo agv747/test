@@ -36,9 +36,7 @@ import {
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
 import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
-import { BOX_SOURCE_LABEL, bindMarkerDrag, layoutMarkers, shelfOverlay } from './shelfOverlay.js';
-import { sampleLuminance } from '../lib/boxes.js';
-import { anchorDetections, detectPriceRows, evenlySpacedRows } from '../lib/shelfRows.js';
+import { shelfSchematic } from './shelfSchematic.js';
 
 export const narrow = true;
 
@@ -53,12 +51,9 @@ const state = {
   drafts: [],
   processingStep: 0,
   expanded: new Set(),
-  /** Results view: the working list, or the photo with detections drawn on it. */
+  /** Results view: the working list, or the shelf drawn as a schematic. */
   resultsView: 'list',
-  overlayImageId: null,
-  overlayFullscreen: false,
-  overlayPlacing: false,
-  /** Set when a marker is tapped, so mount() can scroll that card into view once. */
+  /** Set when a facing is tapped, so mount() can scroll that card into view once. */
   focusDraftId: null,
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
   error: null,
@@ -74,9 +69,6 @@ export function reset() {
   state.processingStep = 0;
   state.expanded = new Set();
   state.resultsView = 'list';
-  state.overlayImageId = null;
-  state.overlayFullscreen = false;
-  state.overlayPlacing = false;
   state.focusDraftId = null;
   state.action = { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] };
   state.error = null;
@@ -308,14 +300,10 @@ function renderResultsStep(ctx) {
   const jti = state.drafts.filter((d) => d.is_jti);
   const competitor = state.drafts.filter((d) => !d.is_jti);
 
-  if (state.resultsView === 'overlay' && state.overlayFullscreen) {
-    return renderOverlayCard(ctx, { fullscreen: true });
-  }
-
   return `
     ${decisionCard(jti)}
     ${viewSwitch()}
-    ${state.resultsView === 'overlay' ? renderOverlayCard(ctx) : ''}
+    ${state.resultsView === 'schematic' ? renderSchematicCard(ctx) : ''}
     <div class="card">
       <div class="card__head">
         <h2>Detected JTI SKUs</h2>
@@ -341,60 +329,41 @@ function renderResultsStep(ctx) {
 }
 
 /**
- * The results can be read as a working list or seen on the photo. The list stays the
- * default: it is what the TME confirms and submits, and it works when the image is no
- * longer on the device.
+ * The results read as a working list or as the shape of the shelf. The list stays the
+ * default: it is what the TME confirms and submits, and it carries every number.
  */
 function viewSwitch() {
-  const available = state.images.some((i) => i.previewUrl);
-  if (!available) return '';
   const btn = (view, label) =>
     `<button class="btn btn--sm${state.resultsView === view ? ' btn--primary' : ''}"
       data-action="set-results-view" data-view="${view}"
       aria-pressed="${state.resultsView === view}">${label}</button>`;
   return `<div class="toolbar" style="margin-bottom:10px">
     ${btn('list', '☰ List')}
-    ${btn('overlay', '⛶ Shelf overlay')}
-    <span class="xsmall muted">See each price where it was read on the photo</span>
+    ${btn('schematic', '▤ Shelf schematic')}
+    <span class="xsmall muted">See the whole shelf at a glance</span>
   </div>`;
 }
 
-function overlayImage() {
-  const usable = state.images.filter((i) => i.previewUrl);
-  return usable.find((i) => i.id === state.overlayImageId) ?? usable[0] ?? null;
-}
-
-function renderOverlayCard(ctx, { fullscreen = false } = {}) {
-  const image = overlayImage();
-  if (!image) return '';
-  const drafts = state.drafts.filter((d) => d.image_id === image.id);
-  const usable = state.images.filter((i) => i.previewUrl);
-  const overlay = shelfOverlay(image, drafts, {
-    threshold: ctx.config.confidence_review_threshold,
-    fullscreen,
-    placing: state.overlayPlacing,
-    simulatedPrices: drafts.some((d) => d.recognition_provider === 'mock-simulator'),
-  });
-
-  if (fullscreen) return overlay;
+/** One schematic per image, since a visit can carry several photos of different shelves. */
+function renderSchematicCard(ctx) {
+  const images = state.images.filter((image) => state.drafts.some((d) => d.image_id === image.id));
+  if (!images.length) return '';
 
   return `<div class="card">
     <div class="card__head">
-      <h2>Shelf overlay</h2>
-      <span class="card__sub">${drafts.length} detection${drafts.length === 1 ? '' : 's'} on this image · tap a marker to correct it</span>
+      <h2>Shelf schematic</h2>
+      <span class="card__sub">${state.drafts.length} facing${state.drafts.length === 1 ? '' : 's'} · tap one to correct it</span>
     </div>
-    ${
-      usable.length > 1
-        ? `<div class="toolbar" style="margin-bottom:8px">${usable
-            .map(
-              (i, idx) =>
-                `<button class="btn btn--sm${i.id === image.id ? ' btn--primary' : ''}"
-                  data-action="set-overlay-image" data-image="${esc(i.id)}">Image ${idx + 1}</button>`,
-            )
-            .join('')}</div>`
-        : ''
-    }
-    ${overlay}
+    ${images
+      .map((image) => {
+        const drafts = state.drafts.filter((d) => d.image_id === image.id);
+        return shelfSchematic(drafts, {
+          threshold: ctx.config.confidence_review_threshold,
+          imageName: images.length > 1 ? image.name : null,
+          simulatedPrices: drafts.some((d) => d.recognition_provider === 'mock-simulator'),
+        });
+      })
+      .join('')}
   </div>`;
 }
 
@@ -514,7 +483,6 @@ function detectionDetail(draft, skuOptions) {
   rows.push(['Recognition confidence', confidenceBar(draft.recognition_confidence)]);
   rows.push(['Image source', esc(draft.image_source === 'camera' ? 'Camera' : 'Gallery')]);
   rows.push(['Recognition provider', esc(draft.recognition_provider ?? '—')]);
-  rows.push(['Position on image', esc(BOX_SOURCE_LABEL[draft.bounding_box?.source ?? 'none'])]);
 
   return `<div class="detection__detail">
     <div class="form-grid mb">
@@ -649,22 +617,6 @@ export function mount(ctx, root) {
     search.setSelectionRange(search.value.length, search.value.length);
   }
 
-  // The photo may not be decoded yet on the first pass, so lay the labels out again once it
-  // is: their widths, and therefore their collisions, are not known until then.
-  layoutMarkers(root);
-  root.querySelector('.ar__img')?.addEventListener('load', () => layoutMarkers(root), { once: true });
-
-  bindMarkerDrag(root, (draftId, box) => {
-    // Where a marker sits is not a correction of what was read, so it leaves the price,
-    // the SKU and the "corrected" flag alone.
-    const idx = state.drafts.findIndex((d) => d.draft_id === draftId);
-    if (idx === -1) return;
-    const next = state.drafts.slice();
-    next[idx] = { ...next[idx], bounding_box: box };
-    state.drafts = next;
-    ctx.render();
-  });
-
   if (state.focusDraftId) {
     // Draft ids contain a colon, so match on the attribute rather than as an id selector.
     const card = root.querySelector(`[id="draft-${state.focusDraftId}"]`);
@@ -719,28 +671,12 @@ export function onAction(action, el, ctx) {
     }
     case 'set-results-view':
       state.resultsView = el.dataset.view;
-      state.overlayFullscreen = false;
-      ctx.render();
-      break;
-    case 'set-overlay-image':
-      state.overlayImageId = el.dataset.image;
-      ctx.render();
-      break;
-    case 'toggle-overlay-fullscreen':
-      state.overlayFullscreen = !state.overlayFullscreen;
-      ctx.render();
-      break;
-    case 'toggle-overlay-placing':
-      state.overlayPlacing = !state.overlayPlacing;
       ctx.render();
       break;
     case 'focus-detection': {
-      // A marker is a way into the correction form, so open the card and go to it.
-      // While markers are being moved, a tap on one must not also open it.
-      if (state.overlayPlacing) break;
+      // A facing in the schematic is a way into the correction form for that detection.
       const id = el.dataset.draft;
       state.expanded.add(id);
-      state.overlayFullscreen = false;
       state.focusDraftId = id;
       ctx.render();
       break;
@@ -867,7 +803,7 @@ async function runProcessing(ctx) {
       config: ctx.config,
       observedAt: new Date().toISOString(),
     });
-    state.drafts = attachCompetitorNames(await anchorDraftsToPhotos(drafts, state.images), ctx.data);
+    state.drafts = attachCompetitorNames(drafts, ctx.data);
     await new Promise((r) => setTimeout(r, 380));
     clearInterval(tick);
     state.step = 'results';
@@ -884,47 +820,6 @@ async function runProcessing(ctx) {
     state.step = 'acquire';
   }
   ctx.render();
-}
-
-/**
- * Puts every detection somewhere on the photograph it came from.
- *
- * Runs for every provider, because none of them can be trusted to say where a price is: the
- * simulator never looks at the image, and the vision models fabricated coordinates twice
- * over. The shelf rows are found in the photo itself and the prices are matched to them in
- * the order they were read.
- */
-async function anchorDraftsToPhotos(drafts, images) {
-  const anchored = new Map();
-
-  for (const image of images) {
-    const own = drafts.filter((d) => d.image_id === image.id);
-    if (!own.length) continue;
-
-    const luma = await sampleImageLuminance(image);
-    const rows = luma ? evenlySpacedRows(detectPriceRows(luma)) : [];
-    for (const placed of anchorDetections(own, rows)) {
-      anchored.set(placed.draft_id, placed.bounding_box);
-    }
-  }
-
-  return drafts.map((d) =>
-    anchored.has(d.draft_id) ? { ...d, bounding_box: anchored.get(d.draft_id) } : d,
-  );
-}
-
-/** Decodes the preview once so the rows can be read off it. Never rejects. */
-function sampleImageLuminance(image) {
-  return new Promise((resolve) => {
-    if (!image.previewUrl || typeof Image === 'undefined') {
-      resolve(null);
-      return;
-    }
-    const element = new Image();
-    element.onload = () => resolve(sampleLuminance(element));
-    element.onerror = () => resolve(null);
-    element.src = image.previewUrl;
-  });
 }
 
 function attachCompetitorNames(drafts, data) {
