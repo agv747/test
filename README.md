@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 214 unit/integration tests (node:test, no browser needed)
+npm test        # 170 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -142,8 +142,6 @@ public/
     seed.js                      deterministic demo dataset
     store.js                     loads from /api/data, writes through /api/mutations
     lib/                         stats, dates, csv, formatting, deterministic RNG
-      shelfRows.js               finds the price rows in a photo and places prices on them
-      boxes.js                   holds a supplied rectangle against the pixels
     services/                    all business logic — pure, framework-free, unit-tested
       priceRuleService.js        effective-rule resolution + overlap validation
       competitorMappingService.js
@@ -336,86 +334,47 @@ npm run dev:local    # wrangler.local.toml — assets + local D1, fully offline
 Under `dev:local`, `/api/recognise` returns 503 and the simulator is used. Keep the bindings
 in the two files in step.
 
-## Shelf overlay — recognition results drawn on the photo
+## Shelf schematic — the detections drawn as a shelf
 
 Step 3 of a price check offers two views of the same detections, and the working list stays
 the default:
 
-- **List** — the cards a TME confirms and submits. Works with no image on the device.
-- **Shelf overlay** — the captured photo with a label above each price carrying that price,
-  the SKU and the recognition percentage. Tapping a label opens that detection for
-  correction; dragging it moves it. A full-screen button removes the surrounding chrome.
+- **List** — the cards a TME confirms and submits. Every number is on them.
+- **Shelf schematic** — the same detections arranged as a shelf: facings side by side, a
+  price ticket under each, one rail per price. Tapping a facing opens that detection for
+  correction. A whole visit can be taken in at a glance instead of scrolled through.
 
-This is an annotated still, not live camera passthrough. A vision model answers in seconds,
-not in frames, so a continuously updating overlay would either lag far behind the camera or
-cost one model call per frame; freezing the frame is also what the task needs, since prices
-are read once per visit and then corrected.
+The pack face carries the SKU name, whether it is JTI or a competitor, and a colour for its
+price position — within, above or below the recommended range, or competitive position at
+risk. Standardised packaging carries no brand colours, so neither does the drawing: the only
+colour on a pack is the thing being judged. Colour is never the only signal — the rail head
+spells the status out in words.
 
-**Where each label sits comes from the photograph, not from the model.** Asked for
-coordinates, `openai:gpt-4o` twice returned a tidy grid of identical rectangles sitting above
-the packs it had just read correctly — right products, right prices, invented positions. It
-reads text well and localises badly, so it is no longer asked. The model says *what* was read
-and *in what order*; the image says *where* each price row is.
+**What it claims, and what it does not.** This is the shelf *as read*, not a plan of the
+physical one. Facings are grouped into rails by shared price, because one rail carries one
+price across several facings, and rails follow the order the prices were read. Nothing here
+knows that two packs are physically adjacent, and the schematic says so on screen.
 
-| Source | Meaning |
-|---|---|
-| `row` | The label sits above a shelf row found in the photo itself. |
-| `band` | No rows could be made out, so prices are spread evenly down the photo in reading order. Approximate. |
-| `manual` | The TME dragged the label there. Saved with the observation. |
-| `model` | A provider that genuinely locates things supplied a rectangle, and it survived the pixel check below. |
+### Why not an overlay on the photo
 
-The weakest provenance present is what the picture as a whole may claim, so one hand-placed
-label never lends credibility to the rest.
+Drawing prices onto the photograph was built twice and abandoned twice. Both attempts needed
+to know where on the image each price sits, and nothing available supplies that:
 
-### Finding the price rows
+- **The model fabricates coordinates.** Asked for them, `openai:gpt-4o` returned a tidy grid
+  of identical rectangles sitting above the packs it had just read correctly — right
+  products, right prices, invented positions — and did it again after the prompt was
+  rewritten to name that exact failure. It reads text well and localises badly.
+- **Checking those rectangles against the pixels was not enough.** Measuring edge density
+  inside each one catches a rectangle over empty background, but a cabinet photo has edges
+  nearly everywhere, so a fabricated rectangle lands on *something* and survives.
+- **Finding the shelf rails in the image worked on a price list and not on a cabinet.** A
+  projection of vertical-stroke density, ranked by topographic prominence, picks the six
+  lines of a printed price list out of a photo exactly. A real cabinet photographed at an
+  angle, behind glass, next to a door and a wall clock, is a different problem.
 
-`public/app/lib/shelfRows.js` samples the photo to a 160px luminance grid and projects the
-density of **vertical strokes** across each row. Horizontal gradients only: a shelf edge or
-the top of a pack is a long horizontal line, while the digits on a price ticket are vertical
-strokes. Peaks in that profile are ranked by **topographic prominence**, which is what
-separates a rail from the leading edge of a band of packs — a rail falls away on both sides,
-a band continues at the same level behind its edge.
-
-Then the largest run of **near-evenly-spaced** rows is kept. Shelves are evenly spaced and so
-are the lines of a printed price list; the clutter around them is not. On the demo photograph
-this is exactly what separates the six price lines from the shop name, the "SMOKING KILLS"
-band and the row of pack labels — all of which are lines of print, and all of which would
-otherwise be offered as places to put a price.
-
-Detections are matched to those rows by **grouping consecutive equal prices**: one rail
-carries one price across several facings, so a run of equal prices is a rail. Group *k* goes
-on row *k*, because the prompt asks for reading order top to bottom. A rail with a single
-price puts its label alternately left and right, because rails are closer together than a
-label is tall and centring them all made the top label untappable.
-
-A label is drawn **above** its price with a stem pointing down at it, rather than as a
-rectangle over it: a rectangle hides the ticket the TME is being asked to confirm, and a
-rectangle that is slightly wrong looks like a claim about which ticket was read.
-
-### Checking a supplied rectangle against the pixels
-
-A provider that does supply rectangles is still held against the photo. `boxes.js` measures
-**edge density** — the fraction of pixels on a steep gradient — inside each one. A price label
-or a pack is full of edges; the dark inside of a cabinet has almost none. Below the threshold
-the rectangle is discarded.
-
-Edge density rather than average contrast, which was tried first and measured wrong: on a real
-price list a legitimate box three times taller than its line scored 0.027 against 0.035 for
-empty shelf, because the surplus white swamps the text. On edge density the same box scores
-0.078 against 0.000. Range separates them too, but one bright speck carries it — and that is
-what sensor noise in a dark cabinet is.
-
-Both checks run in the browser, the only place the pixels exist: the Worker receives a base64
-JPEG it cannot decode. Where there is no canvas to read, nothing is rejected — a check that
-could not run is not evidence against anyone.
-
-### Moving a label
-
-**✥ Move labels** turns the overlay into a placing surface: drag any label onto the price it
-belongs to, and it is recorded as `manual` and saved with the visit. Outside that mode a label
-is a plain tap target and a touch that starts on one scrolls the page. Moving a label never
-touches the price, the SKU, or the "corrected" flag: where a detection sits is not a
-correction of what was read.
+The schematic needs none of it. Everything it draws is already known for certain: what was
+read, at what price, in what order. The prompt now tells the model not to report coordinates
+at all, and asks for reading order instead — which is what the rails are built from.
 
 ## Replacing the recognition simulator
 
@@ -435,9 +394,8 @@ registerProvider({
       sku_candidate: item.skuId,
       price_candidate: item.price,
       confidence: item.confidence,
-      // Optional {x, y, w, h} as fractions of the image, for a provider that genuinely
-      // locates things. It is held against the pixels before anything is drawn. Omit it
-      // and the shelf overlay places the price on a row found in the photo instead.
+      // Optional {x, y, w, h} as fractions of the image. Nothing draws on the photo, so
+      // this is stored rather than shown; the vision models are not asked for it.
       bounding_box: item.box,
       alternatives: item.alternatives,
     }));
@@ -462,12 +420,11 @@ and the services are untouched.
 - Recognition is simulated. It is deterministic per image, so demos are reproducible, but it
   does not read pixels.
 - Images are previewed from an object URL and are not uploaded or persisted; only their
-  metadata (name, source, quality status) is stored. The shelf overlay therefore works during
-  the visit, on the device that took the photo, and Image Review shows a detection's position
-  as geometry without the photograph behind it.
-- Prices are matched to shelf rows by reading order, so a row hidden behind a cabinet door
-  shifts every label below it. The overlay says so, and any label can be dragged onto the
-  right price.
+  metadata (name, source, quality status) is stored, so Image Review shows what was read off
+  a photo without the photo itself.
+- The schematic groups facings into rails by shared price. Two SKUs at the same price on
+  different shelves land on one rail if the model happened to read them consecutively; the
+  schematic states that it is the shelf as read rather than a plan of the real one.
 - Persistence is per-browser `localStorage`, so data is not shared between devices.
 - Opportunity lifecycle state is stored separately from the derived opportunity, keyed by
   outlet + SKU.

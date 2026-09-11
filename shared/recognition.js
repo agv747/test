@@ -10,13 +10,6 @@
  * usually sees is a printed price list, not branded packs on a shelf.
  */
 
-// Detection geometry lives under public/ because the browser must load it too: only the
-// browser holds the pixels needed to check a model's coordinates against the photograph.
-// Wrangler bundles the Worker, so the import crosses directories at build time only.
-import { inferBoxes, parseBox } from '../public/app/lib/boxes.js';
-
-export { inferBoxes, parseBox };
-
 /** Builds the instruction sent with the image. */
 export function buildPrompt(skus, currency = 'SGD') {
   const catalogue = skus
@@ -231,9 +224,9 @@ export function parseModelResponse(text, skus, options = {}) {
       sku_candidate: match?.sku.id ?? null,
       price_candidate: price,
       confidence: round2(confidence),
-      // No position: the vision models are not asked for one, and a model that volunteers
-      // coordinates has twice returned a fabricated grid. Placement happens in the browser,
-      // from the photograph itself — see public/app/lib/shelfRows.js.
+      // No position. The vision models are not asked for one and cannot supply one: asked
+      // twice, gpt-4o returned a fabricated grid of rectangles above the packs it had just
+      // read correctly. Detections are shown as a shelf schematic instead of on the photo.
       bounding_box: null,
       alternatives: [],
       detected_is_jti: match ? Boolean(match.sku.is_jti) : null,
