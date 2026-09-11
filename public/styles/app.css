@@ -545,11 +545,11 @@ textarea { min-height: 74px; resize: vertical; }
 .rail__name { font-weight: 650; color: var(--text); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.68rem; }
 .rail__price { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* Facings sit on the rail, tickets hang off its front edge — the shape of the real thing. */
-.rail__facings {
+/* Products sit on the rail, tickets hang off its front edge — the shape of the real thing. */
+.rail__blocks {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .rail__shelf {
@@ -559,7 +559,7 @@ textarea { min-height: 74px; resize: vertical; }
   margin-top: -2px;
 }
 
-.facing {
+.block {
   border: 0;
   background: none;
   padding: 0;
@@ -568,17 +568,20 @@ textarea { min-height: 74px; resize: vertical; }
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 3px;
-  width: 88px;
 }
-.facing--excluded { opacity: 0.45; }
-.facing:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; border-radius: 6px; }
+.block--excluded { opacity: 0.45; }
+.block:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; border-radius: 6px; }
+
+/* Every pack that was counted, side by side — a product with three facings looks like three
+   packs, which is the whole point of the view. */
+.block__packs { display: flex; gap: 2px; }
 
 /* Standardised packaging carries no brand colours, so neither does the pack face: the only
    colour on it is the price position, which is the thing being judged. */
 .pack {
-  width: 100%;
+  width: 60px;
   min-height: 52px;
   border: 1px solid var(--border-strong);
   border-top: 4px solid var(--none);
@@ -627,6 +630,7 @@ textarea { min-height: 74px; resize: vertical; }
   box-shadow: var(--shadow);
 }
 .ticket__price { font-weight: 700; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.ticket__facings { font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .ticket__conf { font-size: 0.6rem; font-variant-numeric: tabular-nums; }
 .ticket__conf--good { color: var(--good); }
 .ticket__conf--watch { color: var(--watch); }

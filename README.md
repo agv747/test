@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 170 unit/integration tests (node:test, no browser needed)
+npm test        # 192 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -340,9 +340,10 @@ Step 3 of a price check offers two views of the same detections, and the working
 the default:
 
 - **List** — the cards a TME confirms and submits. Every number is on them.
-- **Shelf schematic** — the same detections arranged as a shelf: facings side by side, a
-  price ticket under each, one rail per price. Tapping a facing opens that detection for
-  correction. A whole visit can be taken in at a glance instead of scrolled through.
+- **Shelf schematic** — the same detections arranged as a shelf: every pack that was counted
+  drawn side by side, a price ticket under each product, one row per shelf. Tapping a product
+  opens that detection for correction. A whole visit can be taken in at a glance instead of
+  scrolled through.
 
 The pack face carries the SKU name, whether it is JTI or a competitor, and a colour for its
 price position — within, above or below the recommended range, or competitive position at
@@ -350,10 +351,29 @@ risk. Standardised packaging carries no brand colours, so neither does the drawi
 colour on a pack is the thing being judged. Colour is never the only signal — the rail head
 spells the status out in words.
 
+### What the model is asked for
+
+Two counts, and nothing that has to be measured:
+
+| Field | Question |
+|---|---|
+| `shelf` | Which shelf is this on, counting from the top, starting at 1? |
+| `facings` | How many packs of it stand side by side on that shelf? |
+
+Counting is something a vision model does reliably; locating is not. Both are integers, and
+anything that is not a whole number in range is dropped rather than coerced — a facing count
+of 0, 1.5 or "several" means the model did not count, and a drawn row of packs that nobody
+counted is exactly the kind of invention this application avoids.
+
+A product with three facings is therefore drawn as three packs. Before these fields existed
+the schematic drew one pack per detection, and a shelf holding a row of the same product came
+out as a single pack.
+
 **What it claims, and what it does not.** This is the shelf *as read*, not a plan of the
-physical one. Facings are grouped into rails by shared price, because one rail carries one
-price across several facings, and rails follow the order the prices were read. Nothing here
-knows that two packs are physically adjacent, and the schematic says so on screen.
+physical one. Products sit on the shelf the model counted them on; where along that shelf a
+pack stands is not known and not drawn as if it were. When a model reports no shelf numbers at
+all, products that share a price and were read one after another are grouped instead — a guess
+about grouping, and the schematic says so rather than implying it was counted.
 
 ### Why not an overlay on the photo
 
@@ -372,9 +392,8 @@ to know where on the image each price sits, and nothing available supplies that:
   lines of a printed price list out of a photo exactly. A real cabinet photographed at an
   angle, behind glass, next to a door and a wall clock, is a different problem.
 
-The schematic needs none of it. Everything it draws is already known for certain: what was
-read, at what price, in what order. The prompt now tells the model not to report coordinates
-at all, and asks for reading order instead — which is what the rails are built from.
+The schematic needs none of it. Everything it draws is a count or a value the model actually
+reported. The prompt tells it not to report coordinates at all.
 
 ## Replacing the recognition simulator
 
@@ -422,9 +441,11 @@ and the services are untouched.
 - Images are previewed from an object URL and are not uploaded or persisted; only their
   metadata (name, source, quality status) is stored, so Image Review shows what was read off
   a photo without the photo itself.
-- The schematic groups facings into rails by shared price. Two SKUs at the same price on
-  different shelves land on one rail if the model happened to read them consecutively; the
-  schematic states that it is the shelf as read rather than a plan of the real one.
+- Shelf numbers and facing counts are what the model reports; nothing verifies them against
+  the photo. They are held on the draft for the schematic and are not written to the database,
+  which stores one observation per SKU price.
+- Where a model reports no shelf numbers, the schematic groups by shared price instead and
+  says that the grouping is a guess.
 - Persistence is per-browser `localStorage`, so data is not shared between devices.
 - Opportunity lifecycle state is stored separately from the derived opportunity, keyed by
   outlet + SKU.

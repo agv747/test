@@ -352,7 +352,8 @@ function renderSchematicCard(ctx) {
   return `<div class="card">
     <div class="card__head">
       <h2>Shelf schematic</h2>
-      <span class="card__sub">${state.drafts.length} facing${state.drafts.length === 1 ? '' : 's'} · tap one to correct it</span>
+      <span class="card__sub">${state.drafts.length} product${state.drafts.length === 1 ? '' : 's'}
+        · ${state.drafts.reduce((total, d) => total + Math.max(1, d.facings ?? 1), 0)} facings · tap one to correct it</span>
     </div>
     ${images
       .map((image) => {

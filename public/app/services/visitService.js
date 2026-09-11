@@ -100,6 +100,10 @@ export function buildDraftObservation({
     brand_candidate: detection.brand_candidate,
     alternatives: detection.alternatives ?? [],
     bounding_box: detection.bounding_box ?? null,
+    // Shelf geometry the provider counted rather than measured. Held on the draft for the
+    // schematic; `toRow` writes only declared columns, so neither reaches the database.
+    shelf: detection.shelf ?? null,
+    facings: detection.facings ?? 1,
     detected_sku_id: detection.sku_candidate ?? null,
     detected_price: detection.price_candidate ?? null,
     confirmed_price: detection.price_candidate ?? null,
