@@ -36,7 +36,9 @@ import {
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
 import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
-import { BOX_SOURCE_LABEL, bindMarkerDrag, shelfOverlay } from './shelfOverlay.js';
+import { BOX_SOURCE_LABEL, bindMarkerDrag, layoutMarkers, shelfOverlay } from './shelfOverlay.js';
+import { sampleLuminance } from '../lib/boxes.js';
+import { anchorDetections, detectPriceRows, evenlySpacedRows } from '../lib/shelfRows.js';
 
 export const narrow = true;
 
@@ -371,6 +373,7 @@ function renderOverlayCard(ctx, { fullscreen = false } = {}) {
     threshold: ctx.config.confidence_review_threshold,
     fullscreen,
     placing: state.overlayPlacing,
+    simulatedPrices: drafts.some((d) => d.recognition_provider === 'mock-simulator'),
   });
 
   if (fullscreen) return overlay;
@@ -646,6 +649,11 @@ export function mount(ctx, root) {
     search.setSelectionRange(search.value.length, search.value.length);
   }
 
+  // The photo may not be decoded yet on the first pass, so lay the labels out again once it
+  // is: their widths, and therefore their collisions, are not known until then.
+  layoutMarkers(root);
+  root.querySelector('.ar__img')?.addEventListener('load', () => layoutMarkers(root), { once: true });
+
   bindMarkerDrag(root, (draftId, box) => {
     // Where a marker sits is not a correction of what was read, so it leaves the price,
     // the SKU and the "corrected" flag alone.
@@ -859,7 +867,7 @@ async function runProcessing(ctx) {
       config: ctx.config,
       observedAt: new Date().toISOString(),
     });
-    state.drafts = attachCompetitorNames(drafts, ctx.data);
+    state.drafts = attachCompetitorNames(await anchorDraftsToPhotos(drafts, state.images), ctx.data);
     await new Promise((r) => setTimeout(r, 380));
     clearInterval(tick);
     state.step = 'results';
@@ -876,6 +884,47 @@ async function runProcessing(ctx) {
     state.step = 'acquire';
   }
   ctx.render();
+}
+
+/**
+ * Puts every detection somewhere on the photograph it came from.
+ *
+ * Runs for every provider, because none of them can be trusted to say where a price is: the
+ * simulator never looks at the image, and the vision models fabricated coordinates twice
+ * over. The shelf rows are found in the photo itself and the prices are matched to them in
+ * the order they were read.
+ */
+async function anchorDraftsToPhotos(drafts, images) {
+  const anchored = new Map();
+
+  for (const image of images) {
+    const own = drafts.filter((d) => d.image_id === image.id);
+    if (!own.length) continue;
+
+    const luma = await sampleImageLuminance(image);
+    const rows = luma ? evenlySpacedRows(detectPriceRows(luma)) : [];
+    for (const placed of anchorDetections(own, rows)) {
+      anchored.set(placed.draft_id, placed.bounding_box);
+    }
+  }
+
+  return drafts.map((d) =>
+    anchored.has(d.draft_id) ? { ...d, bounding_box: anchored.get(d.draft_id) } : d,
+  );
+}
+
+/** Decodes the preview once so the rows can be read off it. Never rejects. */
+function sampleImageLuminance(image) {
+  return new Promise((resolve) => {
+    if (!image.previewUrl || typeof Image === 'undefined') {
+      resolve(null);
+      return;
+    }
+    const element = new Image();
+    element.onload = () => resolve(sampleLuminance(element));
+    element.onerror = () => resolve(null);
+    element.src = image.previewUrl;
+  });
 }
 
 function attachCompetitorNames(drafts, data) {

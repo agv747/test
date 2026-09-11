@@ -36,19 +36,13 @@ Rules:
 - If a line is readable but matches nothing in the list, still report it with the text you read.
 - Do not invent products you cannot see. Do not guess a price you cannot read.
 - confidence is your own 0-1 estimate of how certain you are of BOTH the product and the price.
-- Report the lines in the order they appear in the image, top to bottom.
-- "box" is OPTIONAL: [x0, y0, x1, y1] around the PRINTED PRICE LABEL for that product — the
-  ticket or list line carrying the number you read, not the shelf or the cabinet around it.
-  Coordinates are fractions of the image: x0 is the left edge and x1 the right edge measured
-  from the LEFT of the image, y0 is the top edge and y1 the bottom edge measured DOWN from
-  the TOP of the image, all between 0 and 1.
-  Include "box" only if you can point at that label. If you are estimating, or if the boxes
-  would come out as an even grid of equal rectangles, LEAVE "box" OUT of every detection: a
-  rectangle over the wrong place is worse than no rectangle, because it invites someone to
-  confirm a price they never checked.
+- Report the lines in the ORDER THEY APPEAR in the image, top to bottom, left to right. This
+  order is used to place each price back on the photograph, so it matters as much as the
+  values. Where one price covers several facings side by side, report each facing.
+- Do not report coordinates. You are not asked where anything is.
 
 Respond with JSON only, no commentary, in exactly this shape:
-{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60","box":[0.05,0.21,0.95,0.28]}]}`;
+{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60"}]}`;
 }
 
 /* -------------------------------------------------------------- model input */
@@ -237,12 +231,15 @@ export function parseModelResponse(text, skus, options = {}) {
       sku_candidate: match?.sku.id ?? null,
       price_candidate: price,
       confidence: round2(confidence),
-      bounding_box: parseBox(row?.box ?? row?.bbox ?? row?.bounding_box),
+      // No position: the vision models are not asked for one, and a model that volunteers
+      // coordinates has twice returned a fabricated grid. Placement happens in the browser,
+      // from the photograph itself — see public/app/lib/shelfRows.js.
+      bounding_box: null,
       alternatives: [],
       detected_is_jti: match ? Boolean(match.sku.is_jti) : null,
       match_score: match ? round2(match.score) : null,
     });
   }
 
-  return { detections: inferBoxes(detections), unmatched };
+  return { detections, unmatched };
 }

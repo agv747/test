@@ -158,22 +158,46 @@ try {
   await page.click('[data-action="set-results-view"][data-view="overlay"]');
   await wait(400);
   check((await page.locator('.ar__img').count()) === 1, 'the captured photo is shown in the overlay');
-  const markers = await page.locator('.ar__box').count();
+  const markers = await page.locator('.ar__pin').count();
   check(markers >= 4, `${markers} detections are marked on the photo`);
-  const firstMarker = await page.locator('.ar__box').first().innerText();
-  check(/\d+\.\d\d/.test(firstMarker), 'a marker shows the price');
-  check(/\d+%/.test(firstMarker), 'a marker shows the recognition percentage');
+  const firstMarker = await page.locator('.ar__pin').first().innerText();
+  check(/\d+\.\d\d/.test(firstMarker), 'a label shows the price');
+  check(/\d+%/.test(firstMarker), 'a label shows the recognition percentage');
+  check((await page.locator('.ar__name').first().innerText()).length > 2, 'a label shows the SKU');
+  check((await page.locator('.ar__stem').count()) === markers, 'every label points at the price it marks');
+
+  // Labels stacked on top of each other hide prices and make the covered one untappable.
+  const overlaps = await page.locator('.ar__tag').evaluateAll((els) => {
+    const boxes = els.map((e) => e.getBoundingClientRect());
+    const hits = [];
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) hits.push([i, j]);
+      }
+    }
+    return hits;
+  });
+  check(overlaps.length === 0, `no two labels cover each other (${JSON.stringify(overlaps)})`);
+
+  // Labels are placed from rows found in the photo, never from coordinates a model reported.
+  const legendText = await page.locator('.ar__legend').innerText();
+  check(
+    /sits above the shelf row it was read from|No shelf rows could be made out/.test(legendText),
+    'the overlay says how the labels were placed',
+  );
   const legend = await page.locator('.ar__legend').innerText();
   check(/read both the product name and the price/.test(legend), 'the overlay explains the percentage');
   check(
-    /Simulated positions|Approximate positions|Positions reported by/.test(legend),
-    'the overlay states where the rectangles came from',
+    /generated these prices from the catalogue/.test(legend),
+    'the overlay says the simulator never read this photo',
   );
   await shot('05b-shelf-overlay');
 
   // A marker is the way into the correction form for that detection.
-  const markerDraft = await page.locator('.ar__box').first().getAttribute('data-draft');
-  await page.locator('.ar__box').first().click();
+  const markerDraft = await page.locator('.ar__pin').first().getAttribute('data-draft');
+  await page.locator('.ar__pin').first().click();
   await wait(400);
   check(
     (await page.locator(`[id="draft-${markerDraft}"] .detection__detail`).count()) === 1,
@@ -183,28 +207,27 @@ try {
   // A marker that lands off the pack can be dragged onto it.
   await page.click('[data-action="toggle-overlay-placing"]');
   await wait(350);
-  check((await page.locator('.ar--placing').count()) === 1, 'markers can be put into placing mode');
+  check((await page.locator('.ar--placing').count()) === 1, 'labels can be put into placing mode');
   // Some detections are already open (Review Required expands itself, and a marker was
   // tapped above), so the test is that dragging changes nothing about what is open.
   const openBeforeDrag = await page.locator('.detection__detail').count();
-  const target = page.locator('.ar__box').first();
+  const target = page.locator('.ar__pin').first();
   const markerBefore = await target.boundingBox();
   await page.mouse.move(markerBefore.x + markerBefore.width / 2, markerBefore.y + markerBefore.height / 2);
   await page.mouse.down();
   await page.mouse.move(markerBefore.x + markerBefore.width / 2 + 40, markerBefore.y + markerBefore.height / 2 + 60, { steps: 8 });
   await page.mouse.up();
   await wait(400);
-  const markerAfter = await page.locator('.ar__box').first().boundingBox();
+  const markerAfter = await page.locator('.ar__pin').first().boundingBox();
   const moved = Math.round(markerAfter.y - markerBefore.y);
-  check(moved >= 40, `a marker can be dragged onto the right pack (moved ${moved}px down)`);
+  check(moved >= 40, `a label can be dragged onto the right price (moved ${moved}px down)`);
   check(
-    (await page.locator('.ar__legend').innerText()).includes('placed by hand') ||
-      (await page.locator('.ar__box--manual').count()) > 0,
-    'a hand-placed marker is recorded as placed by hand',
+    (await page.locator('.ar__pin--manual').count()) > 0,
+    'a hand-placed label is recorded as placed by hand',
   );
   check(
     (await page.locator('.detection__detail').count()) === openBeforeDrag,
-    'dragging a marker does not also open it for correction',
+    'dragging a label does not also open it for correction',
   );
   await shot('05d-shelf-overlay-placing');
   await page.click('[data-action="toggle-overlay-placing"]');
@@ -271,6 +294,37 @@ try {
     check(/Shared database/.test(indicator), 'a new browser reads from the shared database');
     await fresh.close();
   }
+
+  /* ------------------------------------------ manager navigation on a phone */
+  console.log('\nManager navigation (414×896)');
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.selectOption('[data-action="switch-user"]', 'usr-mgr-1');
+  await wait(500);
+  await page.setViewportSize({ width: 414, height: 896 });
+  await wait(400);
+
+  check((await page.locator('.sidebar:visible').count()) === 0, 'the desktop sidebar is hidden on a phone');
+  const barLinks = await page.locator('.mobile-nav [data-nav]').evaluateAll((e) => e.map((x) => x.dataset.nav));
+  check(barLinks.length >= 3, `the bottom bar holds ${barLinks.length} destinations`);
+  check(
+    (await page.locator('.mobile-nav [data-action="toggle-more-nav"]').count()) === 1,
+    'the destinations the bar cannot hold are reachable through More',
+  );
+
+  await page.click('[data-action="toggle-more-nav"]');
+  await wait(350);
+  const sheetLinks = await page.locator('.more-nav__link').evaluateAll((e) => e.map((x) => x.dataset.nav));
+  check(sheetLinks.length === 12, `every manager destination is listed (${sheetLinks.length})`);
+  for (const route of ['manager/field-effectiveness', 'manager/territories', 'admin/price-rules', 'admin/image-review', 'admin/master-data']) {
+    check(sheetLinks.includes(route), `${route} is reachable on a phone`);
+  }
+  check((await page.locator('.more-nav__section').count()) === 3, 'the sheet keeps the sidebar grouping');
+  await shot('13-mobile-more-nav');
+
+  await page.click('.more-nav__link[data-nav="admin/image-review"]');
+  await wait(500);
+  check(/Image Review/.test(await page.locator('.topbar__title h1').textContent()), 'a sheet link navigates');
+  check((await page.locator('.more-nav').count()) === 0, 'the sheet closes once a destination is chosen');
 
   /* --------------------------------------------- manager routes (desktop) */
   console.log('\nManager and admin routes (1440×950)');

@@ -30,7 +30,7 @@ function draft(overrides = {}) {
     confirmed_price: 13.6,
     detected_price: 13.6,
     recognition_confidence: 0.96,
-    bounding_box: { x: 0.05, y: 0.2, w: 0.9, h: 0.08, source: 'model' },
+    bounding_box: { x: 0.5, y: 0.2, source: 'row' },
     excluded: false,
     ...overrides,
   };
@@ -45,12 +45,12 @@ test('a marker carries the SKU, the price and the recognition percentage', () =>
   assert.match(html, /96%/);
 });
 
-test('a marker is positioned from its box as percentages of the image', () => {
+test('a label is positioned at the price it points to, as percentages of the image', () => {
   const html = shelfOverlay(IMAGE, [draft()]);
-  assert.match(html, /left:5%/);
-  assert.match(html, /top:20%/);
-  assert.match(html, /width:90%/);
-  assert.match(html, /height:8%/);
+  assert.match(html, /left:50\.00%/);
+  assert.match(html, /top:20\.00%/);
+  // The body sits above that point and a stem reaches down to it, so the price stays visible.
+  assert.match(html, /ar__stem/);
 });
 
 test('a marker opens the correction form for its own detection', () => {
@@ -69,19 +69,19 @@ test('an unrecognised detection is still drawn rather than left off the photo', 
   const html = shelfOverlay(IMAGE, [draft({ sku: null, brand_candidate: null, recognition_confidence: 0.3 })]);
   assert.match(html, /Unrecognised item/);
   assert.match(html, /30%/);
-  assert.match(html, /ar__box--risk/);
+  assert.match(html, /ar__pin--risk/);
 });
 
 test('an excluded detection is drawn as excluded, not silently removed', () => {
   const html = shelfOverlay(IMAGE, [draft({ excluded: true })]);
-  assert.match(html, /ar__box--excluded/);
+  assert.match(html, /ar__pin--excluded/);
 });
 
 test('confidence sets the marker colour against the review threshold', () => {
   const at = (confidence) => shelfOverlay(IMAGE, [draft({ recognition_confidence: confidence })], { threshold: 0.75 });
-  assert.match(at(0.96), /ar__box--good/);
-  assert.match(at(0.8), /ar__box--watch/);
-  assert.match(at(0.6), /ar__box--risk/);
+  assert.match(at(0.96), /ar__pin--good/);
+  assert.match(at(0.8), /ar__pin--watch/);
+  assert.match(at(0.6), /ar__pin--risk/);
 });
 
 test('a detection with no position appears in the list instead, and the count says so', () => {
@@ -91,42 +91,44 @@ test('a detection with no position appears in the list instead, and the count sa
 
 /* ---------------------------------------------------- how the positions were arrived at */
 
-test('the provenance of the rectangles is always stated', () => {
-  const model = shelfOverlay(IMAGE, [draft()]);
-  assert.match(model, /Positions reported by the recognition model/);
+test('the provenance of every label is always stated', () => {
+  const onRow = shelfOverlay(IMAGE, [draft()]);
+  assert.match(onRow, /sits above the shelf row it was read from/);
+  assert.match(onRow, /can be one row out where a row is hidden/);
 
-  const inferred = shelfOverlay(IMAGE, [
-    draft({ bounding_box: { x: 0.03, y: 0.1, w: 0.94, h: 0.2, source: 'inferred' } }),
-  ]);
-  assert.match(inferred, /Approximate positions/);
-  assert.match(inferred, /did not report where each one sits/);
-
-  const simulated = shelfOverlay(IMAGE, [
-    draft({ bounding_box: { x: 0.03, y: 0.1, w: 0.94, h: 0.2, source: 'simulated' } }),
-  ]);
-  assert.match(simulated, /Simulated positions/);
-  assert.match(simulated, /does not look at the image/);
+  const band = shelfOverlay(IMAGE, [draft({ bounding_box: { x: 0.5, y: 0.1, source: 'band' } })]);
+  assert.match(band, /Approximate positions/);
+  assert.match(band, /No shelf rows could be made out/);
 });
 
-test('an inferred layout is never described as where the model looked', () => {
-  assert.doesNotMatch(BOX_SOURCE_NOTE.inferred, /reported by/i);
+test('invented prices are called out separately from where the labels sit', () => {
+  // The simulator can be placed on real rows read off a real photo — which makes it more,
+  // not less, important to say that the prices themselves were never read.
+  const html = shelfOverlay(IMAGE, [draft()], { simulatedPrices: true });
+  assert.match(html, /sits above the shelf row it was read from/);
+  assert.match(html, /generated these prices from the catalogue without looking at the photo/);
+  assert.doesNotMatch(shelfOverlay(IMAGE, [draft()]), /generated these prices/);
+});
+
+test('an approximate layout is never described as where anything was measured', () => {
+  assert.doesNotMatch(BOX_SOURCE_NOTE.band, /reported by/i);
   assert.doesNotMatch(BOX_SOURCE_NOTE.simulated, /reported by/i);
-  assert.match(BOX_SOURCE_LABEL.inferred, /Approximate/);
-  assert.match(BOX_SOURCE_LABEL.simulated, /Simulated/);
+  assert.match(BOX_SOURCE_LABEL.band, /Approximate/);
+  assert.match(BOX_SOURCE_LABEL.row, /shelf row it was read from/);
 });
 
 test('the weakest provenance present decides what the picture claims', () => {
-  const box = (source) => ({ bounding_box: { x: 0, y: 0, w: 1, h: 0.1, source } });
-  assert.equal(boxSource([box('model')]), 'model');
-  assert.equal(boxSource([box('simulated'), box('inferred')]), 'simulated');
-  assert.equal(boxSource([box('inferred')]), 'inferred');
+  const box = (source) => ({ bounding_box: { x: 0.5, y: 0.2, source } });
+  assert.equal(boxSource([box('row')]), 'row');
+  assert.equal(boxSource([box('simulated'), box('band')]), 'simulated');
+  assert.equal(boxSource([box('band')]), 'band');
   assert.equal(boxSource([{ bounding_box: null }]), 'none');
 
-  // One hand-placed marker must not let the rest borrow its credibility, and one measured
-  // box must not lend its credibility to a picture that is mostly guesswork.
-  assert.equal(boxSource([box('manual'), box('inferred')]), 'inferred');
-  assert.equal(boxSource([box('model'), box('inferred')]), 'inferred');
-  assert.equal(boxSource([box('manual'), box('model')]), 'model');
+  // One hand-placed label must not let the rest borrow its credibility, and one label on a
+  // real shelf row must not lend its credibility to a picture that is mostly guesswork.
+  assert.equal(boxSource([box('manual'), box('band')]), 'band');
+  assert.equal(boxSource([box('row'), box('band')]), 'band');
+  assert.equal(boxSource([box('manual'), box('row')]), 'row');
   assert.equal(boxSource([box('manual')]), 'manual');
 });
 
@@ -135,50 +137,47 @@ test('the weakest provenance present decides what the picture claims', () => {
 test('a marker can be identified for dragging and says so to a screen reader', () => {
   const html = shelfOverlay(IMAGE, [draft()]);
   assert.match(html, /data-marker="img-1:0"/);
-  assert.match(html, /Tap to correct, drag to place on the pack/);
+  assert.match(html, /Tap to correct, drag to place on the price/);
 });
 
-test('the marker names where its own position came from, not just the picture as a whole', () => {
-  const inferred = shelfOverlay(IMAGE, [
-    draft({ bounding_box: { x: 0, y: 0.1, w: 1, h: 0.2, source: 'inferred' } }),
-  ]);
-  assert.match(inferred, /Approximate — reading order/);
+test('the label names where its own position came from, not just the picture as a whole', () => {
+  const band = shelfOverlay(IMAGE, [draft({ bounding_box: { x: 0.5, y: 0.1, source: 'band' } })]);
+  assert.match(band, /Approximate — reading order/);
 });
 
 test('placing mode is off until asked for, and says what to do when on', () => {
   const off = shelfOverlay(IMAGE, [draft()]);
-  assert.match(off, /Move markers/);
+  assert.match(off, /Move labels/);
   assert.doesNotMatch(off, /ar--placing/);
 
   const on = shelfOverlay(IMAGE, [draft()], { placing: true });
   assert.match(on, /ar--placing/);
   assert.match(on, /Done moving/);
-  assert.match(on, /Drag any marker onto the pack or price label it belongs to/);
+  assert.match(on, /Drag any label onto the price it belongs to/);
   assert.match(on, /kept with the visit/);
 });
 
-test('a hand-placed marker is drawn as such', () => {
-  const html = shelfOverlay(IMAGE, [
-    draft({ bounding_box: { x: 0.2, y: 0.3, w: 0.3, h: 0.1, source: 'manual' } }),
-  ]);
-  assert.match(html, /ar__box--manual/);
+test('a hand-placed label is drawn as such', () => {
+  const html = shelfOverlay(IMAGE, [draft({ bounding_box: { x: 0.2, y: 0.3, source: 'manual' } })]);
+  assert.match(html, /ar__pin--manual/);
   assert.match(html, /Placed by you/);
 });
 
-test('the legend tells the TME they can move a marker that sits wrong', () => {
-  assert.match(BOX_SOURCE_NOTE.model, /Drag a marker/);
-  assert.match(BOX_SOURCE_NOTE.inferred, /Drag a marker/);
+test('the legend tells the TME they can move a label that sits wrong', () => {
+  assert.match(BOX_SOURCE_NOTE.row, /Drag any label/);
+  assert.match(BOX_SOURCE_NOTE.band, /Drag any label/);
   assert.match(BOX_SOURCE_NOTE.manual, /saved with the visit/);
 });
 
-test('the inferred note admits that rejected positions land here too', () => {
-  // A model whose coordinates were discarded for pointing at empty photo must not look the
-  // same as one that honestly reported nothing.
-  assert.match(BOX_SOURCE_NOTE.inferred, /pointed at empty parts of the photo/);
+test('a row placement admits the one way it goes wrong', () => {
+  // Prices are matched to rows by reading order, so a row hidden behind a door shifts every
+  // label below it. Saying so is the difference between a guide and a false claim.
+  assert.match(BOX_SOURCE_NOTE.row, /matched to them in the order the model read them/);
+  assert.match(BOX_SOURCE_NOTE.row, /one row out/);
 });
 
 test('every provenance has a note and a short label — none can render as undefined', () => {
-  for (const key of ['model', 'inferred', 'simulated', 'none']) {
+  for (const key of ['row', 'band', 'model', 'inferred', 'simulated', 'manual', 'none']) {
     assert.ok(BOX_SOURCE_NOTE[key], `${key} has a note`);
     assert.ok(BOX_SOURCE_LABEL[key], `${key} has a label`);
   }

@@ -36,23 +36,6 @@ function priceFor(rand, basePrice, offset) {
   return round(Math.round(raw * 20) / 20, 2);
 }
 
-/**
- * A plausible position on a grid. Marked `simulated` so the shelf overlay can say the
- * rectangles were invented alongside the prices, rather than read off the photo.
- */
-function boundingBox(rand, index, total) {
-  const cols = Math.min(3, total);
-  const col = index % cols;
-  const row = Math.floor(index / cols);
-  return {
-    x: round(0.04 + col * (0.92 / cols), 3),
-    y: round(0.08 + row * 0.24 + jitter(rand, 0.01), 3),
-    w: round(0.92 / cols - 0.04, 3),
-    h: 0.2,
-    source: 'simulated',
-  };
-}
-
 export const mockRecognitionProvider = {
   id: 'mock-simulator',
   label: 'MVP Simulator',
@@ -117,7 +100,6 @@ export const mockRecognitionProvider = {
         sku_candidate: sku.id,
         price_candidate: price,
         confidence,
-        bounding_box: boundingBox(rand, detections.length, 6),
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
       });
@@ -147,7 +129,6 @@ export const mockRecognitionProvider = {
         sku_candidate: sku.id,
         price_candidate: price,
         confidence: round(0.86 + rand() * 0.12, 2),
-        bounding_box: boundingBox(rand, detections.length, 6),
         alternatives: [],
         detected_is_jti: false,
       });
@@ -174,7 +155,6 @@ export const mockRecognitionProvider = {
         sku_candidate: sku.id,
         price_candidate: priceFor(rand, base, 0.1),
         confidence: round(0.5 + rand() * 0.2, 2),
-        bounding_box: boundingBox(rand, detections.length, 6),
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
       });
