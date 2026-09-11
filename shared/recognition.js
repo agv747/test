@@ -29,13 +29,18 @@ Rules:
 - If a line is readable but matches nothing in the list, still report it with the text you read.
 - Do not invent products you cannot see. Do not guess a price you cannot read.
 - confidence is your own 0-1 estimate of how certain you are of BOTH the product and the price.
-- Report the lines in the ORDER THEY APPEAR in the image, top to bottom, left to right. This
-  order is used to place each price back on the photograph, so it matters as much as the
-  values. Where one price covers several facings side by side, report each facing.
-- Do not report coordinates. You are not asked where anything is.
+- Report the lines in the ORDER THEY APPEAR in the image, top to bottom, left to right.
+- "shelf" is which shelf the product sits on, counting from the TOP of the image and starting
+  at 1. Everything standing on the same shelf gets the same number. For a printed price list,
+  use the line number instead: first line is 1.
+- "facings" is HOW MANY packs of that same product stand side by side on that shelf. Count
+  them. Use 1 when you can see only one, and 1 for a printed price list, where a line is a
+  price rather than a pack.
+- Do not report coordinates. You are not asked where anything is, only what is there, on
+  which shelf, and how many of it.
 
 Respond with JSON only, no commentary, in exactly this shape:
-{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60"}]}`;
+{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60","shelf":1,"facings":3}]}`;
 }
 
 /* -------------------------------------------------------------- model input */
@@ -184,6 +189,25 @@ function clamp01(value) {
 }
 
 /**
+ * Reads a count a model reported — how many packs, which shelf.
+ *
+ * Counting a handful of identical packs in a row, and saying which shelf from the top a
+ * product sits on, are the two things about shelf geometry a vision model can actually do.
+ * Asking it for coordinates produced fabricated rectangles twice; asking it to count does
+ * not have that failure mode, because there is nothing to interpolate.
+ *
+ * Anything that is not a whole number in range is dropped rather than coerced: a facing
+ * count of 0, 1.5 or "several" means the model did not count, and a drawn row of packs that
+ * nobody counted is exactly the kind of invention this application avoids.
+ */
+export function parseCount(value, { min = 1, max = 40 } = {}) {
+  const number = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+  if (!Number.isFinite(number) || !Number.isInteger(number)) return null;
+  if (number < min || number > max) return null;
+  return number;
+}
+
+/**
  * Converts a model response into the detection shape the application already consumes.
  *
  * Unmatched lines are kept with `sku_candidate: null` rather than dropped: the TME can
@@ -231,6 +255,10 @@ export function parseModelResponse(text, skus, options = {}) {
       alternatives: [],
       detected_is_jti: match ? Boolean(match.sku.is_jti) : null,
       match_score: match ? round2(match.score) : null,
+      // Which shelf it stands on and how many of it stand there. Both are counts, which is
+      // the only kind of shelf geometry a vision model reports reliably.
+      shelf: parseCount(row?.shelf ?? row?.row ?? row?.shelf_index, { max: 20 }),
+      facings: parseCount(row?.facings ?? row?.facing_count ?? row?.count, { max: 20 }) ?? 1,
     });
   }
 

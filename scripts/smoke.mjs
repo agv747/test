@@ -158,53 +158,138 @@ try {
   await page.click('[data-action="set-results-view"][data-view="schematic"]');
   await wait(400);
 
-  const facings = await page.locator('.facing').count();
-  check(facings === detections, `every detection has a facing on the shelf (${facings})`);
-  check((await page.locator('.rail').count()) >= 1, 'facings are arranged on rails');
+  const blocks = await page.locator('.block').count();
+  check(blocks === detections, `every detection has a place on the shelf (${blocks})`);
+  check((await page.locator('.rail').count()) >= 1, 'products are arranged on shelves');
+  check(
+    (await page.locator('.pack').count()) > blocks,
+    'products with several facings are drawn as several packs',
+  );
 
-  const firstFacing = await page.locator('.facing').first().innerText();
-  check(/\d+\.\d\d/.test(firstFacing), 'a facing shows the price on its ticket');
-  check(/\d+%/.test(firstFacing), 'a facing shows the recognition percentage');
-  check(/JTI|Comp\./.test(firstFacing), 'a facing says whose SKU it is');
+  const firstBlock = await page.locator('.block').first().innerText();
+  check(/\d+\.\d\d/.test(firstBlock), 'a product shows the price on its ticket');
+  check(/\d+%/.test(firstBlock), 'a product shows the recognition percentage');
+  check(/JTI|Comp\./.test(firstBlock), 'a product says whose SKU it is');
 
   const railHeads = await page.locator('.rail__head').allInnerTexts();
   check(railHeads.every((h) => /SGD \d+\.\d\d/.test(h)), 'every rail is labelled with its price');
-  check(railHeads.some((h) => /facing/.test(h)), 'every rail says how many facings sit on it');
+  check(railHeads.some((h) => /facing/.test(h)), 'every shelf says how many facings sit on it');
 
-  // One rail carries one price, so equal consecutive prices must share a rail.
+  // A shelf head must account for every price standing on it: one price, or the range.
   const railPrices = await page.locator('.rail').evaluateAll((rails) =>
-    rails.map((r) => [...r.querySelectorAll('.ticket__price')].map((t) => t.textContent.trim())),
+    rails.map((r) => ({
+      head: r.querySelector('.rail__price').textContent.trim(),
+      tickets: [...r.querySelectorAll('.ticket__price')].map((t) => t.textContent.trim()),
+    })),
   );
   check(
-    railPrices.every((prices) => new Set(prices).size === 1),
-    `each rail carries a single price (${JSON.stringify(railPrices)})`,
+    railPrices.every(({ head, tickets }) => {
+      const sorted = [...new Set(tickets)].sort((a, b) => Number(a) - Number(b));
+      return head.includes(sorted[0]) && head.includes(sorted.at(-1));
+    }),
+    `every shelf head accounts for the prices on it (${JSON.stringify(railPrices)})`,
   );
 
   const note = await page.locator('.schematic p').first().innerText();
-  check(/shelf as read, not a plan of the real one/.test(note), 'the schematic says what it is');
+  check(/The shelf as read/.test(note), 'the schematic says what it is');
   check(
     (await page.locator('.schematic').innerText()).includes('generated these prices from the catalogue'),
     'the schematic says the simulator never read this photo',
   );
   await shot('05b-shelf-schematic');
 
-  // A facing is the way into the correction form for its own detection.
-  const facingDraft = await page.locator('.facing').first().getAttribute('data-draft');
+  // A product on the shelf is the way into the correction form for its own detection.
+  const facingDraft = await page.locator('.block').first().getAttribute('data-draft');
   const openBeforeTap = await page.locator('.detection__detail').count();
-  await page.locator('.facing').first().click();
+  await page.locator('.block').first().click();
   await wait(400);
   check(
     (await page.locator(`[id="draft-${facingDraft}"] .detection__detail`).count()) === 1,
-    'tapping a facing opens that detection for correction',
+    'tapping a product opens that detection for correction',
   );
   check(
     (await page.locator('.detection__detail').count()) >= openBeforeTap,
-    'tapping a facing does not close anything already open',
+    'tapping a product does not close anything already open',
   );
 
   await page.click('[data-action="set-results-view"][data-view="list"]');
   await wait(300);
   check((await page.locator('.schematic').count()) === 0, 'the schematic can be switched back off');
+
+  /* ------------------------------- a vision model's answer, drawn as a shelf */
+  //
+  // The live model call cannot run from here (the egress proxy answers 403 to CONNECT for
+  // api.openai.com), so /api/recognise is answered with what gpt-4o returns for a cabinet
+  // photo. Everything after that hop is the real client: provider, draft builder, schematic.
+  console.log('\nVision-model answer drawn as a shelf (414×896)');
+
+  await page.route('**/api/recognise', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'openai:gpt-4o',
+        detections: [
+          { raw_text: 'MEVIUS Original $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-original', price_candidate: 18.3, confidence: 0.95, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 3 },
+          { raw_text: 'MEVIUS Sky Blue $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-sky', price_candidate: 18.3, confidence: 0.94, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 2 },
+          { raw_text: 'CAMEL Blue $16.00', brand_candidate: 'Camel', sku_candidate: 'sku-jti-camel-blue', price_candidate: 16, confidence: 0.93, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 2, facings: 3 },
+          { raw_text: 'PALL MALL Red $16.00', brand_candidate: 'Pall Mall', sku_candidate: 'sku-bat-pallmall-red', price_candidate: 16, confidence: 0.91, bounding_box: null, alternatives: [], detected_is_jti: false, shelf: 2, facings: 2 },
+        ],
+        unmatched: 0,
+        duration_ms: 1200,
+        raw_response: '{"detections":[…]}',
+      }),
+    }),
+  );
+
+  // Switch the active provider to a vision model, the way an operator would.
+  await page.goto(`${BASE}#/admin/master-data`, { waitUntil: 'load' });
+  await wait(500);
+  await page.click('[data-action="tab"][data-tab="recognition"]');
+  await wait(400);
+  await page.click('[data-action="pick-model"][data-model="openai:gpt-4o"]');
+  await wait(400);
+
+  // A reload clears the wizard, which is module state: a hash change alone would land on
+  // the results step of the visit just finished. The chosen model is in localStorage and
+  // survives, which is the point of the reload.
+  await page.goto(`${BASE}#/field/check`, { waitUntil: 'load' });
+  await page.reload({ waitUntil: 'load' });
+  await wait(700);
+  await page.fill('#outlet-search', 'SG-E-1042');
+  await wait();
+  await page.locator('.outlet-card').first().click();
+  await wait();
+  await page.setInputFiles('#gallery-input', ['public/demo-images/shelf-punggol-central.jpg']);
+  await wait(700);
+  await page.click('[data-action="process"]');
+  await wait(2200);
+
+  check((await page.locator('.detection').count()) === 4, 'the model answer became four detections');
+  await page.click('[data-action="set-results-view"][data-view="schematic"]');
+  await wait(400);
+
+  const drawnPacks = await page.locator('.pack').count();
+  check(drawnPacks === 10, `a row of packs is drawn per facing count, not one per product (${drawnPacks} of 10)`);
+  const shelves = await page.locator('.rail__name').allInnerTexts();
+  check(shelves.length === 2, `the two shelves the model counted became two shelves (${shelves.join(', ')})`);
+
+  const blockCounts = await page.locator('.block').evaluateAll((blocks) =>
+    blocks.map((b) => [Number(b.dataset.facings), b.querySelectorAll('.pack').length]),
+  );
+  check(
+    blockCounts.every(([counted, drawn]) => counted === drawn),
+    `each product draws exactly the packs it was counted for (${JSON.stringify(blockCounts)})`,
+  );
+  check(
+    (await page.locator('.schematic').innerText()).includes('the model counted them on'),
+    'the schematic says the shelves were counted, not guessed',
+  );
+  check(
+    !(await page.locator('.schematic').innerText()).includes('generated these prices'),
+    'a real model is not described as the simulator',
+  );
+  await shot('05c-vision-model-shelf');
 
   await page.locator('.detection__head').first().click();
   await wait(250);

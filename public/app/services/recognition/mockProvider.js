@@ -17,6 +17,17 @@ import { rngFor } from '../../lib/rng.js';
 import { round } from '../../lib/stats.js';
 import { resolveEffectivePriceRule } from '../priceRuleService.js';
 
+/**
+ * How many packs of a product stand side by side, and on which shelf.
+ *
+ * A real shelf holds several facings of the same product; a real vision model is asked to
+ * count them. The simulator does the same so the schematic is exercised with the shape it
+ * gets in the field rather than one pack per product.
+ */
+function shelfPlan(rand, index) {
+  return { shelf: Math.floor(index / 2) + 1, facings: 1 + Math.floor(rand() * 3) };
+}
+
 /** Detection "recipes" — engineered offsets from the recommended price. */
 const RECIPES = [
   { key: 'within', offset: 0, confidence: [0.93, 0.99] },
@@ -102,6 +113,7 @@ export const mockRecognitionProvider = {
         confidence,
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
+        ...shelfPlan(rand, detections.length),
       });
     });
 
@@ -131,6 +143,7 @@ export const mockRecognitionProvider = {
         confidence: round(0.86 + rand() * 0.12, 2),
         alternatives: [],
         detected_is_jti: false,
+        ...shelfPlan(rand, detections.length),
       });
     });
 
@@ -157,6 +170,7 @@ export const mockRecognitionProvider = {
         confidence: round(0.5 + rand() * 0.2, 2),
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
+        ...shelfPlan(rand, detections.length),
       });
     }
 

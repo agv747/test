@@ -5,6 +5,7 @@ import {
   extractJson,
   matchSku,
   normalise,
+  parseCount,
   parseModelResponse,
   parsePrice,
 } from '../shared/recognition.js';
@@ -217,12 +218,59 @@ test('the model is not asked for coordinates at all', () => {
   assert.doesNotMatch(prompt, /\bbbox\b/);
 });
 
-test('the prompt asks for reading order instead, and says why it matters', () => {
+test('the prompt asks for the two things a vision model can actually count', () => {
+  // Which shelf, and how many packs stand on it. Both are counts; neither can be
+  // interpolated into existence the way a rectangle can.
   const prompt = buildPrompt(SKUS, 'SGD');
   assert.match(prompt, /ORDER THEY APPEAR/);
   assert.match(prompt, /top to bottom, left to right/);
-  assert.match(prompt, /used to place each price back on the photograph/);
-  assert.match(prompt, /report each facing/);
+  assert.match(prompt, /"shelf" is which shelf/);
+  assert.match(prompt, /counting from the TOP/);
+  assert.match(prompt, /"facings" is HOW MANY packs/);
+  assert.match(prompt, /Count\s+them/);
+  // A price list has lines, not facings, and the photo is usually a price list.
+  assert.match(prompt, /1 for a printed price list/);
+});
+
+test('shelf and facings are read back off the response', () => {
+  const response = JSON.stringify({
+    detections: [
+      { product: 'Winston Red', price: 13.6, shelf: 2, facings: 3 },
+      { product: 'Marlboro Red', price: 16, shelf: 2, facings: 1 },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.equal(detections[0].shelf, 2);
+  assert.equal(detections[0].facings, 3);
+  assert.equal(detections[1].facings, 1);
+});
+
+test('a model that says nothing about shelves or facings yields one pack and no shelf', () => {
+  const { detections } = parseModelResponse('[{"product":"Winston Red","price":13.6}]', SKUS);
+  assert.equal(detections[0].shelf, null);
+  assert.equal(detections[0].facings, 1, 'one pack is the only count that can be assumed');
+});
+
+test('a count that is not a whole number in range is dropped, not coerced', () => {
+  // "several" or 1.5 means the model did not count, and a row of packs nobody counted is
+  // exactly the kind of invention this application refuses to draw.
+  assert.equal(parseCount(3), 3);
+  assert.equal(parseCount('4'), 4);
+  assert.equal(parseCount(0), null);
+  assert.equal(parseCount(1.5), null);
+  assert.equal(parseCount(-2), null);
+  assert.equal(parseCount('several'), null);
+  assert.equal(parseCount(null), null);
+  assert.equal(parseCount(999, { max: 20 }), null);
+});
+
+test('alternative field names a model might use are accepted', () => {
+  const response = JSON.stringify({
+    detections: [{ product: 'Winston Red', price: 13.6, row: 3, count: 2 }],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.equal(detections[0].shelf, 3);
+  assert.equal(detections[0].facings, 2);
 });
 
 test('a model that volunteers coordinates anyway has them ignored', () => {
