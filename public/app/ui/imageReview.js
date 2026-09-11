@@ -11,6 +11,7 @@ import {
   statusPill,
 } from './dom.js';
 import { BOX_SOURCE_LABEL } from './shelfOverlay.js';
+import { anchorOf } from '../lib/shelfRows.js';
 
 let selectedId = null;
 let showResolved = false;
@@ -61,7 +62,7 @@ export function render(ctx) {
 
 function reviewPanel(ctx, o) {
   const image = ctx.data.images.find((i) => i.id === o.image_id);
-  const box = o.bounding_box;
+  const anchor = anchorOf(o.bounding_box);
 
   return `<div class="card">
     <div class="card__head">
@@ -75,18 +76,19 @@ function reviewPanel(ctx, o) {
           <div class="mono small">${esc(image?.file_name ?? 'image unavailable')}</div>
           <div class="xsmall muted mt">Source: ${esc(image?.image_source ?? '—')} · Quality: ${esc(image?.quality_status ?? '—')}</div>
           ${
-            box
-              ? `<svg viewBox="0 0 100 100" width="100%" height="130" style="margin-top:10px" role="img" aria-label="Detected region">
+            anchor
+              ? `<svg viewBox="0 0 100 100" width="100%" height="130" style="margin-top:10px" role="img"
+                   aria-label="Where on the photo this price was read">
                   <rect x="0" y="0" width="100" height="100" fill="#e9edf1"></rect>
-                  <rect x="${box.x * 100}" y="${box.y * 100}" width="${box.w * 100}" height="${box.h * 100}"
-                    fill="none" stroke="var(--accent)" stroke-width="1.5"></rect>
-                  <text x="${box.x * 100 + 1}" y="${box.y * 100 - 1}" font-size="4" fill="var(--accent)">detected region</text>
+                  <line x1="0" y1="${anchor.y * 100}" x2="100" y2="${anchor.y * 100}"
+                    stroke="var(--border-strong)" stroke-width="0.8" stroke-dasharray="2 2"></line>
+                  <circle cx="${anchor.x * 100}" cy="${anchor.y * 100}" r="2.6" fill="var(--accent)"></circle>
                 </svg>
-                <div class="xsmall muted">Position: ${esc(BOX_SOURCE_LABEL[box.source ?? 'none'])}</div>`
-              : '<p class="xsmall muted mt">No position supplied by the recognition provider.</p>'
+                <div class="xsmall muted">Position: ${esc(BOX_SOURCE_LABEL[anchor.source ?? 'none'])}</div>`
+              : '<p class="xsmall muted mt">No position was recorded for this detection.</p>'
           }
-          <p class="xsmall muted">Images are not uploaded, so the region is shown as geometry
-            without the photograph. The TME sees the same detections drawn on the real photo
+          <p class="xsmall muted">Images are not uploaded, so the position is shown as geometry
+            without the photograph. The TME sees the same prices drawn on the real photo
             during the visit, in the shelf overlay.</p>
         </div>
       </div>

@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 144 unit/integration tests (node:test, no browser needed)
+npm test        # 214 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -142,6 +142,8 @@ public/
     seed.js                      deterministic demo dataset
     store.js                     loads from /api/data, writes through /api/mutations
     lib/                         stats, dates, csv, formatting, deterministic RNG
+      shelfRows.js               finds the price rows in a photo and places prices on them
+      boxes.js                   holds a supplied rectangle against the pixels
     services/                    all business logic — pure, framework-free, unit-tested
       priceRuleService.js        effective-rule resolution + overlap validation
       competitorMappingService.js
@@ -175,6 +177,11 @@ worker.js                        Worker entry: static assets + /api routes
 - **Terminology is enforced by a test.** `tests/terminology.test.js` scans all user-facing
   source for compliance framing ("violation", "non-compliant", "target price", …) and fails
   the build if any appears.
+- **Every destination is reachable at every width.** Below 860px the sidebar is replaced by a
+  bottom bar, which holds four items; a manager has twelve. The rest reach the phone through
+  **More**, a sheet listing all of them under the same section headings. The bar is not
+  allowed to be the whole of anyone's navigation, and a smoke check counts the destinations
+  at 414px to keep it that way.
 
 ### Rule resolution
 
@@ -335,74 +342,80 @@ Step 3 of a price check offers two views of the same detections, and the working
 the default:
 
 - **List** — the cards a TME confirms and submits. Works with no image on the device.
-- **Shelf overlay** — the captured photo with a marker per detection carrying the price, the
-  SKU and the recognition percentage. Tapping a marker opens that detection for correction.
-  A full-screen button removes the surrounding chrome.
+- **Shelf overlay** — the captured photo with a label above each price carrying that price,
+  the SKU and the recognition percentage. Tapping a label opens that detection for
+  correction; dragging it moves it. A full-screen button removes the surrounding chrome.
 
 This is an annotated still, not live camera passthrough. A vision model answers in seconds,
 not in frames, so a continuously updating overlay would either lag far behind the camera or
 cost one model call per frame; freezing the frame is also what the task needs, since prices
 are read once per visit and then corrected.
 
-**Where the rectangles come from is always stated on screen**, because a rectangle on a
-photograph reads as evidence:
+**Where each label sits comes from the photograph, not from the model.** Asked for
+coordinates, `openai:gpt-4o` twice returned a tidy grid of identical rectangles sitting above
+the packs it had just read correctly — right products, right prices, invented positions. It
+reads text well and localises badly, so it is no longer asked. The model says *what* was read
+and *in what order*; the image says *where* each price row is.
 
 | Source | Meaning |
 |---|---|
-| `model` | The model reported coordinates and they survived the check below. |
-| `inferred` | It reported none — or reported ones that failed the check — so lines are laid out in the order it read them, top to bottom. Approximate. |
-| `manual` | The TME dragged the marker there. Saved with the observation. |
-| `simulated` | The MVP Simulator invented both the prices and the rectangles. |
+| `row` | The label sits above a shelf row found in the photo itself. |
+| `band` | No rows could be made out, so prices are spread evenly down the photo in reading order. Approximate. |
+| `manual` | The TME dragged the label there. Saved with the observation. |
+| `model` | A provider that genuinely locates things supplied a rectangle, and it survived the pixel check below. |
 
-Most vision models return no coordinates when reading a printed price list, so `inferred` is
-the common case. The prompt asks for an optional `box`, states the coordinate frame instead of
-assuming the model shares one, and says to leave `box` out of every detection rather than
-estimate. Measured and inferred geometry are never mixed in one picture, and the weakest
-provenance present is what the picture as a whole is allowed to claim.
+The weakest provenance present is what the picture as a whole may claim, so one hand-placed
+label never lends credibility to the rest.
 
-### Why coordinates are checked against the pixels
+### Finding the price rows
 
-A vision model read a shelf photo correctly — right products, right prices — and returned a
-tidy two-by-three lattice of identical rectangles sitting a tenth of the image above the packs
-they claimed to mark. Every number was in range and internally consistent, so no amount of
-geometry could tell they were invented.
+`public/app/lib/shelfRows.js` samples the photo to a 160px luminance grid and projects the
+density of **vertical strokes** across each row. Horizontal gradients only: a shelf edge or
+the top of a pack is a long horizontal line, while the digits on a price ticket are vertical
+strokes. Peaks in that profile are ranked by **topographic prominence**, which is what
+separates a rail from the leading edge of a band of packs — a rail falls away on both sides,
+a band continues at the same level behind its edge.
 
-The pixels can. `public/app/lib/boxes.js` samples the uploaded frame to a 160px luminance grid
-and measures **edge density** — the fraction of pixels sitting on a steep gradient — inside
-each reported box. A price label or a pack is full of edges; the dark inside of a cabinet has
-almost none. A box below the threshold is discarded, and if every box is discarded the whole
-set falls back to reading order rather than leaving the photo unannotated.
+Then the largest run of **near-evenly-spaced** rows is kept. Shelves are evenly spaced and so
+are the lines of a printed price list; the clutter around them is not. On the demo photograph
+this is exactly what separates the six price lines from the shop name, the "SMOKING KILLS"
+band and the row of pack labels — all of which are lines of print, and all of which would
+otherwise be offered as places to put a price.
 
-Edge density rather than average contrast, which was tried first and failed: measured on a
-real price list, a legitimate box three times taller than the line it marks scored *below*
-empty shelf on average contrast, because the surplus white swamped the text. It scored 0.078
-against 0.000 on edge density, since surplus background adds no edges to find. Range separates
-them too, but one bright speck carries it — and that is what sensor noise in a dark cabinet is.
+Detections are matched to those rows by **grouping consecutive equal prices**: one rail
+carries one price across several facings, so a run of equal prices is a rail. Group *k* goes
+on row *k*, because the prompt asks for reading order top to bottom. A rail with a single
+price puts its label alternately left and right, because rails are closer together than a
+label is tall and centring them all made the top label untappable.
 
-The check runs in the browser, because that is the only place the pixels exist: the Worker
-receives a base64 JPEG it cannot decode. Where there is no canvas to read (a tainted canvas, a
-browser that blocks readback) nothing is rejected — a check that could not run is not evidence
-against the model.
+A label is drawn **above** its price with a stem pointing down at it, rather than as a
+rectangle over it: a rectangle hides the ticket the TME is being asked to confirm, and a
+rectangle that is slightly wrong looks like a claim about which ticket was read.
 
-### Moving a marker
+### Checking a supplied rectangle against the pixels
 
-**✥ Move markers** turns the overlay into a placing surface: drag any marker onto the pack or
-price label it belongs to, and it is recorded as `manual` and saved with the visit. Outside
-that mode a marker is a plain tap target and a touch that starts on one scrolls the page —
-markers cover most of the photo, so making every one of them swallow a swipe would leave the
-page unscrollable on a phone. Moving a marker never touches the price, the SKU, or the
-"corrected" flag: where a detection sits is not a correction of what was read.
+A provider that does supply rectangles is still held against the photo. `boxes.js` measures
+**edge density** — the fraction of pixels on a steep gradient — inside each one. A price label
+or a pack is full of edges; the dark inside of a cabinet has almost none. Below the threshold
+the rectangle is discarded.
 
-### The recognition percentage
+Edge density rather than average contrast, which was tried first and measured wrong: on a real
+price list a legitimate box three times taller than its line scored 0.027 against 0.035 for
+empty shelf, because the surplus white swamps the text. On edge density the same box scores
+0.078 against 0.000. Range separates them too, but one bright speck carries it — and that is
+what sensor noise in a dark cabinet is.
 
-The percentage beside a detection is the model's own certainty that it read **both the
-product name and the price** correctly. It says nothing about whether the price is
-commercially good or bad. It is never rendered as a bare number next to a price-position
-pill, where it read as one more business figure — it carries the word *Recognition*, a plain
-word (*read clearly* / *read with doubt* / *needs confirming*) so the reading never depends on
-colour, and the explanation sits on the same screen. Below
-`config.confidence_review_threshold` (0.75) the detection is marked **Review Required** and
-does not drive a price-position judgement until it is confirmed.
+Both checks run in the browser, the only place the pixels exist: the Worker receives a base64
+JPEG it cannot decode. Where there is no canvas to read, nothing is rejected — a check that
+could not run is not evidence against anyone.
+
+### Moving a label
+
+**✥ Move labels** turns the overlay into a placing surface: drag any label onto the price it
+belongs to, and it is recorded as `manual` and saved with the visit. Outside that mode a label
+is a plain tap target and a touch that starts on one scrolls the page. Moving a label never
+touches the price, the SKU, or the "corrected" flag: where a detection sits is not a
+correction of what was read.
 
 ## Replacing the recognition simulator
 
@@ -422,10 +435,9 @@ registerProvider({
       sku_candidate: item.skuId,
       price_candidate: item.price,
       confidence: item.confidence,
-      // {x, y, w, h} as fractions of the image, plus source: 'model'. Omit it and the
-      // shelf overlay lays the detections out in reading order, labelled approximate.
-      // A box that points at a featureless part of the photo is discarded — see
-      // "Why coordinates are checked against the pixels".
+      // Optional {x, y, w, h} as fractions of the image, for a provider that genuinely
+      // locates things. It is held against the pixels before anything is drawn. Omit it
+      // and the shelf overlay places the price on a row found in the photo instead.
       bounding_box: item.box,
       alternatives: item.alternatives,
     }));
@@ -451,8 +463,11 @@ and the services are untouched.
   does not read pixels.
 - Images are previewed from an object URL and are not uploaded or persisted; only their
   metadata (name, source, quality status) is stored. The shelf overlay therefore works during
-  the visit, on the device that took the photo, and Image Review shows a detection's region as
-  geometry without the photograph behind it.
+  the visit, on the device that took the photo, and Image Review shows a detection's position
+  as geometry without the photograph behind it.
+- Prices are matched to shelf rows by reading order, so a row hidden behind a cabinet door
+  shifts every label below it. The overlay says so, and any label can be dragged onto the
+  right price.
 - Persistence is per-browser `localStorage`, so data is not shared between devices.
 - Opportunity lifecycle state is stored separately from the derived opportunity, keyed by
   outlet + SKU.

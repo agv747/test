@@ -1,53 +1,62 @@
 /**
- * Shelf overlay — the captured photo with every detection drawn on it (§8.6, optional view).
+ * Shelf overlay — the captured photo with every price drawn where it was read (§8.6).
  *
  * What this is, and what it deliberately is not:
  *
- * It is an annotated still. The photo the TME just took is shown at full width with one
- * marker per detection, each carrying the SKU, the price and the recognition percentage,
- * so "where did SGD 13.30 come from?" is answered by looking rather than by reading a list.
- * Tapping a marker opens that detection for correction.
+ * It is an annotated still. The photo the TME just took is shown at full width, and above
+ * each price on the shelf sits a label carrying that price, the SKU and how well it was
+ * read, so "where did SGD 13.30 come from?" is answered by looking rather than by reading a
+ * list. Tapping a label opens that detection for correction; dragging it moves it.
  *
  * It is not live camera passthrough. A vision model answers in seconds, not in frames, so a
  * continuously updating overlay would either lag far behind the camera or cost a model call
  * per frame. Freezing the frame is also what the task actually needs: prices are read once
  * per visit and then corrected, and a still image can be zoomed and re-read at leisure.
  *
- * Positions come from three different places and the difference matters commercially, so it
- * is stated on screen rather than implied by drawing everything the same way:
- *
- *   model      the model reported coordinates — the rectangle is where it says it looked
- *   inferred   it reported none, so lines are laid out in reading order, top to bottom
- *   simulated  the MVP Simulator invented both the prices and the rectangles
+ * Nothing here uses coordinates from the recognition model. Asked for them, gpt-4o twice
+ * returned a tidy grid of identical rectangles sitting above the packs it had just read
+ * correctly. It reads text well and localises badly, so it is no longer asked: the model
+ * says WHAT was read and in what order, and the photograph itself says WHERE each price row
+ * sits (see lib/shelfRows.js).
  */
 
 import { CONFIDENCE_NOTE, confidenceTone, confidenceWord, esc, money } from './dom.js';
+import { anchorOf } from '../lib/shelfRows.js';
 
-/** How the rectangles were arrived at. Never omitted: an inferred box invites false trust. */
+/** How a label came to be where it is. Never omitted: a label on a photo reads as evidence. */
 export const BOX_SOURCE_NOTE = {
-  model:
-    'Positions reported by the recognition model and checked against the photo. Drag a marker ' +
-    'if it sits off the pack; tap it to correct the SKU or the price.',
+  row:
+    'Each price sits above the shelf row it was read from. The rows were found in the photo ' +
+    'itself and the prices were matched to them in the order the model read them, so a label ' +
+    'can be one row out where a row is hidden. Drag any label onto the right price.',
+  band:
+    'Approximate positions. No shelf rows could be made out in this photo, so the prices are ' +
+    'spread evenly down it in the order they were read. Drag any label onto the price it ' +
+    'belongs to.',
+  model: 'Positions reported by the recognition provider and checked against the photo.',
   inferred:
-    'Approximate positions. The model read the lines but did not report where each one sits — ' +
-    'or reported positions that pointed at empty parts of the photo — so they are laid out in ' +
-    'the order it read them, top to bottom. Drag a marker onto the pack it belongs to.',
-  simulated:
-    'Simulated positions. The MVP Simulator does not look at the image — both the prices and ' +
-    'the rectangles are generated from the catalogue. Select a vision model in Admin to read ' +
-    'this photo for real.',
+    'Approximate positions, spread down the photo in the order the prices were read. Drag any ' +
+    'label onto the price it belongs to.',
+  simulated: 'Simulated positions, generated from the catalogue rather than read from the image.',
   manual: 'Positions you placed by hand. These are saved with the visit.',
-  none: 'The recognition provider reported no positions for this image.',
+  none: 'No positions are available for this image.',
 };
 
 /** The same distinction in three words, for a detail row. */
 export const BOX_SOURCE_LABEL = {
-  model: 'Reported by the model',
+  row: 'On the shelf row it was read from',
+  band: 'Approximate — reading order',
+  model: 'Reported by the provider',
   inferred: 'Approximate — reading order',
   simulated: 'Simulated',
   manual: 'Placed by you',
-  none: 'Not reported',
+  none: 'Not placed',
 };
+
+/** Said alongside the above when the prices themselves were never read from the image. */
+export const SIMULATED_PRICES_NOTE =
+  'The MVP Simulator generated these prices from the catalogue without looking at the photo. ' +
+  'Select a vision model in Admin to read this photo for real.';
 
 /**
  * The provenance the picture as a whole can claim.
@@ -57,10 +66,9 @@ export const BOX_SOURCE_LABEL = {
  */
 export function boxSource(drafts) {
   const sources = new Set(drafts.map((d) => d.bounding_box?.source).filter(Boolean));
-  if (sources.has('simulated')) return 'simulated';
-  if (sources.has('inferred')) return 'inferred';
-  if (sources.has('model')) return 'model';
-  if (sources.has('manual')) return 'manual';
+  for (const weakest of ['simulated', 'band', 'inferred', 'row', 'model', 'manual']) {
+    if (sources.has(weakest)) return weakest;
+  }
   return 'none';
 }
 
@@ -74,26 +82,33 @@ function markerLabel(draft) {
   return { name, price, pct };
 }
 
+/**
+ * One label, sitting above the price it belongs to and pointing down at it.
+ *
+ * Above rather than over: a rectangle drawn across a price ticket hides the very thing the
+ * TME is being asked to confirm, and a rectangle that is even slightly wrong looks like a
+ * claim about which ticket was read. A label with a pointer makes the same claim, leaves the
+ * ticket visible underneath, and is small enough that several fit on one shelf.
+ */
 function marker(draft, index, threshold) {
-  const box = draft.bounding_box;
-  if (!box) return '';
+  const anchor = anchorOf(draft.bounding_box);
+  if (!anchor) return '';
   const tone = confidenceTone(draft.recognition_confidence, threshold);
   const { name, price, pct } = markerLabel(draft);
   const word = confidenceWord(draft.recognition_confidence, threshold);
-  const style = `left:${box.x * 100}%;top:${box.y * 100}%;width:${box.w * 100}%;height:${box.h * 100}%`;
+  const source = anchor.source ?? 'none';
 
   return `<button type="button"
-    class="ar__box ar__box--${tone}${draft.excluded ? ' ar__box--excluded' : ''}${box.source === 'manual' ? ' ar__box--manual' : ''}"
-    style="${style}"
+    class="ar__pin ar__pin--${tone}${draft.excluded ? ' ar__pin--excluded' : ''}${source === 'manual' ? ' ar__pin--manual' : ''}"
+    style="left:${(anchor.x * 100).toFixed(2)}%;top:${(anchor.y * 100).toFixed(2)}%"
     data-action="focus-detection" data-draft="${esc(draft.draft_id)}" data-marker="${esc(draft.draft_id)}"
-    aria-label="${esc(`${index}. ${name}, ${money(price)}, recognition ${pct}, ${word}. ${BOX_SOURCE_LABEL[box.source ?? 'none']}. Tap to correct, drag to place on the pack.`)}">
+    aria-label="${esc(`${index}. ${name}, ${money(price)}, recognition ${pct}, ${word}. ${BOX_SOURCE_LABEL[source]}. Tap to correct, drag to place on the price.`)}">
     <span class="ar__tag">
-      <span class="ar__line">
-        <span class="ar__price">${esc(Number.isFinite(price) ? price.toFixed(2) : '—')}</span>
-        <span class="ar__conf">${esc(pct)}</span>
-      </span>
+      <span class="ar__price">${esc(Number.isFinite(price) ? price.toFixed(2) : '—')}</span>
       <span class="ar__name">${esc(name)}</span>
+      <span class="ar__conf">${esc(pct)}</span>
     </span>
+    <span class="ar__stem" aria-hidden="true"></span>
   </button>`;
 }
 
@@ -103,7 +118,7 @@ function marker(draft, index, threshold) {
  * @param {{threshold?:number, fullscreen?:boolean, placing?:boolean}} options
  */
 export function shelfOverlay(image, drafts, options = {}) {
-  const { threshold = 0.75, fullscreen = false, placing = false } = options;
+  const { threshold = 0.75, fullscreen = false, placing = false, simulatedPrices = false } = options;
   const placed = drafts.filter((d) => d.bounding_box);
   const source = boxSource(drafts);
 
@@ -122,32 +137,89 @@ export function shelfOverlay(image, drafts, options = {}) {
     <div class="ar__tools">
       <button type="button" class="ar__tool${placing ? ' ar__tool--on' : ''}"
         data-action="toggle-overlay-placing" aria-pressed="${placing}">
-        ${placing ? '✓ Done moving' : '✥ Move markers'}
+        ${placing ? '✓ Done moving' : '✥ Move labels'}
       </button>
       <button type="button" class="ar__tool" data-action="toggle-overlay-fullscreen">
         ${fullscreen ? '✕ Close' : '⤢ Full screen'}
       </button>
     </div>
   </div>
-  ${placing ? '<p class="xsmall muted mt">Drag any marker onto the pack or price label it belongs to. Positions you set are kept with the visit.</p>' : ''}
-  ${fullscreen ? '' : overlayLegend(source, placed.length, drafts.length)}`;
+  ${placing ? '<p class="xsmall muted mt">Drag any label onto the price it belongs to. Positions you set are kept with the visit.</p>' : ''}
+  ${fullscreen ? '' : overlayLegend(source, placed.length, drafts.length, simulatedPrices)}`;
 }
 
-/* ------------------------------------------------------------- placing by hand */
+/* --------------------------------------------------------------- laying out */
 
 function clamp01(value) {
   return Math.min(1, Math.max(0, value));
 }
 
+function intersects(a, b) {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+/** Centre positions to try: where it wants to be, then further out to each side. */
+function* columnCandidates(centre, width, half, step = 8) {
+  const clamp = (value) => Math.min(width - half, Math.max(half, value));
+  yield clamp(centre);
+  for (let offset = step; offset <= width; offset += step) {
+    yield clamp(centre + offset);
+    yield clamp(centre - offset);
+  }
+}
+
 /**
- * Lets the TME drag a marker onto the pack it belongs to.
+ * Slides labels sideways until none covers another.
  *
- * Only active while the overlay is in placing mode. Outside it, a marker is a plain tap
- * target and a touch that starts on one scrolls the page — markers cover most of the photo,
- * so making every one of them swallow a swipe would leave the page unscrollable on a phone.
+ * Placement can only know which row a price belongs to, not how wide its label will be once
+ * the SKU name is in it — and shelf rows are closer together than a label is tall, so two
+ * rows' labels collide whenever they happen to land in the same column. A covered label
+ * hides a price and cannot be tapped.
+ *
+ * Only the horizontal position moves. Which row a label sits on is the claim it makes; where
+ * along that row is not, since nothing here knows which facing a price came from.
+ */
+export function layoutMarkers(root) {
+  const layer = root?.querySelector?.('.ar__layer');
+  if (!layer) return;
+  const bounds = layer.getBoundingClientRect();
+  if (!bounds.width) return;
+
+  const taken = [];
+  for (const pin of layer.querySelectorAll('.ar__pin')) {
+    const tag = pin.querySelector('.ar__tag');
+    if (!tag) continue;
+
+    const rect = tag.getBoundingClientRect();
+    const half = rect.width / 2;
+    const top = rect.top - bounds.top;
+    const bottom = rect.bottom - bounds.top;
+
+    let chosen = pin.offsetLeft;
+    for (const candidate of columnCandidates(pin.offsetLeft, bounds.width, half)) {
+      const box = { left: candidate - half, right: candidate + half, top, bottom };
+      if (!taken.some((other) => intersects(other, box))) {
+        chosen = candidate;
+        break;
+      }
+    }
+
+    pin.style.left = `${(chosen / bounds.width) * 100}%`;
+    taken.push({ left: chosen - half, right: chosen + half, top, bottom });
+  }
+}
+
+/* ------------------------------------------------------------- placing by hand */
+
+/**
+ * Lets the TME drag a label onto the price it belongs to.
+ *
+ * Only active while the overlay is in placing mode. Outside it, a label is a plain tap
+ * target and a touch that starts on one scrolls the page — making every label swallow a
+ * swipe would leave the page hard to scroll on a phone.
  *
  * @param {HTMLElement} root  the rendered page
- * @param {(draftId: string, box: {x,y,w,h,source:'manual'}) => void} onPlaced
+ * @param {(draftId: string, anchor: {x, y, source:'manual'}) => void} onPlaced
  */
 export function bindMarkerDrag(root, onPlaced) {
   const layer = root.querySelector('.ar--placing .ar__layer');
@@ -156,7 +228,7 @@ export function bindMarkerDrag(root, onPlaced) {
   let drag = null;
 
   layer.addEventListener('pointerdown', (event) => {
-    const marker = event.target.closest('.ar__box');
+    const marker = event.target.closest('.ar__pin');
     if (!marker) return;
     const bounds = layer.getBoundingClientRect();
     drag = {
@@ -181,7 +253,7 @@ export function bindMarkerDrag(root, onPlaced) {
 
     drag.moved = true;
     event.preventDefault();
-    drag.marker.classList.add('ar__box--dragging');
+    drag.marker.classList.add('ar__pin--dragging');
     drag.marker.style.left = `${clamp01((drag.left + dx) / drag.bounds.width) * 100}%`;
     drag.marker.style.top = `${clamp01((drag.top + dy) / drag.bounds.height) * 100}%`;
   });
@@ -190,14 +262,13 @@ export function bindMarkerDrag(root, onPlaced) {
     if (!drag) return;
     const { marker, moved, id, bounds } = drag;
     drag = null;
-    marker.classList.remove('ar__box--dragging');
+    marker.classList.remove('ar__pin--dragging');
     if (!moved) return;
 
+    // The pin is positioned by the point it aims at, so that point is what is stored.
     onPlaced(id, {
       x: clamp01(marker.offsetLeft / bounds.width),
       y: clamp01(marker.offsetTop / bounds.height),
-      w: marker.offsetWidth / bounds.width,
-      h: marker.offsetHeight / bounds.height,
       source: 'manual',
     });
   };
@@ -209,7 +280,7 @@ export function bindMarkerDrag(root, onPlaced) {
   layer.addEventListener(
     'click',
     (event) => {
-      if (!event.target.closest('.ar__box')) return;
+      if (!event.target.closest('.ar__pin')) return;
       event.stopPropagation();
       event.preventDefault();
     },
@@ -217,7 +288,7 @@ export function bindMarkerDrag(root, onPlaced) {
   );
 }
 
-function overlayLegend(source, placedCount, totalCount) {
+function overlayLegend(source, placedCount, totalCount, simulatedPrices = false) {
   const missing = totalCount - placedCount;
   return `<div class="ar__legend">
     <div class="ar__keys">
@@ -227,6 +298,7 @@ function overlayLegend(source, placedCount, totalCount) {
     </div>
     <p class="xsmall muted">${esc(CONFIDENCE_NOTE)}</p>
     <p class="xsmall muted">${esc(BOX_SOURCE_NOTE[source])}</p>
+    ${simulatedPrices ? `<p class="xsmall muted">${esc(SIMULATED_PRICES_NOTE)}</p>` : ''}
     ${missing > 0 ? `<p class="xsmall muted">${missing} detection${missing === 1 ? ' has' : 's have'} no position and appear only in the list below.</p>` : ''}
   </div>`;
 }

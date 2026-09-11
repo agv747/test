@@ -269,7 +269,25 @@ test('inferring over an empty response yields an empty response', () => {
   assert.deepEqual(inferBoxes([]), []);
 });
 
-test('a model that reports boxes has them carried through to the detections', () => {
+test('the model is not asked for coordinates at all', () => {
+  // Asked for them, gpt-4o twice returned a tidy grid of identical rectangles sitting above
+  // the packs it had just read correctly. Asking invites the fabrication; the photograph
+  // itself is what places a price (see public/app/lib/shelfRows.js).
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /Do not report coordinates/);
+  assert.doesNotMatch(prompt, /"box"/);
+  assert.doesNotMatch(prompt, /\bbbox\b/);
+});
+
+test('the prompt asks for reading order instead, and says why it matters', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /ORDER THEY APPEAR/);
+  assert.match(prompt, /top to bottom, left to right/);
+  assert.match(prompt, /used to place each price back on the photograph/);
+  assert.match(prompt, /report each facing/);
+});
+
+test('a model that volunteers coordinates anyway has them ignored', () => {
   const response = JSON.stringify({
     detections: [
       { product: 'Winston Red', price: 13.6, confidence: 0.95, box: [0.05, 0.2, 0.95, 0.27] },
@@ -277,42 +295,8 @@ test('a model that reports boxes has them carried through to the detections', ()
     ],
   });
   const { detections } = parseModelResponse(response, SKUS);
-  assert.equal(detections[0].bounding_box.source, 'model');
-  assert.equal(detections[0].bounding_box.y, 0.2);
-  assert.equal(detections[1].bounding_box.y, 0.3);
-});
-
-test('a model that reports no boxes still yields a drawable, honestly labelled layout', () => {
-  const response = JSON.stringify({
-    detections: [
-      { product: 'Winston Red', price: 13.6 },
-      { product: 'Marlboro Red', price: 16 },
-    ],
-  });
-  const { detections } = parseModelResponse(response, SKUS);
-  assert.ok(detections.every((d) => d.bounding_box));
-  assert.ok(detections.every((d) => d.bounding_box.source === 'inferred'));
-});
-
-test('the prompt asks for a position only when the model can genuinely supply one', () => {
-  const prompt = buildPrompt(SKUS, 'SGD');
-  assert.match(prompt, /"box"/);
-  assert.match(prompt, /OPTIONAL/);
-  assert.match(prompt, /LEAVE "box" OUT/);
-  assert.match(prompt, /top to bottom/);
-});
-
-test('the prompt states the coordinate frame instead of assuming the model shares one', () => {
-  const prompt = buildPrompt(SKUS, 'SGD');
-  assert.match(prompt, /from the LEFT of the image/);
-  assert.match(prompt, /DOWN from\s+the TOP of the image/);
-  assert.match(prompt, /PRINTED PRICE LABEL/);
-});
-
-test('the prompt names the failure a model actually produced: an even grid', () => {
-  // A model read a shelf correctly and returned a tidy lattice of identical rectangles
-  // sitting above the packs. Naming that shape is cheaper than detecting it afterwards.
-  assert.match(buildPrompt(SKUS, 'SGD'), /even grid of equal rectangles/);
+  assert.equal(detections.length, 2);
+  assert.ok(detections.every((d) => d.bounding_box === null), 'no position comes back from the model');
 });
 
 test('the recommended free model has no licence click-through', async () => {

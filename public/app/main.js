@@ -179,15 +179,55 @@ function navHtml(ctx) {
     .join('');
 }
 
+/** Open state of the phone "More" sheet. Closed on every navigation. */
+let moreOpen = false;
+
+/**
+ * The bottom bar on a phone.
+ *
+ * A manager has twelve destinations and the bar holds four, so the rest reach the phone
+ * through "More" rather than being cut off: before this, Field Effectiveness, Territories,
+ * Outlets, Price Rules, Competitor Mapping, Image Review and Admin simply did not exist for
+ * anyone on a phone, because the bar was the whole of their navigation.
+ */
 function mobileNavHtml(ctx) {
-  const items = (ctx.user.role === 'field' ? FIELD_NAV : MANAGER_NAV.filter((i) => !i.section)).slice(0, 5);
-  return items
-    .map(
-      (item) =>
-        `<button data-nav="${esc(item.route)}" class="${ctx.path === item.route ? 'is-active' : ''}">
-          <span class="icon">${item.icon}</span>${esc(item.label)}</button>`,
-    )
-    .join('');
+  const isField = ctx.user.role === 'field';
+  const destinations = (isField ? FIELD_NAV : MANAGER_NAV).filter((i) => !i.section);
+  const shown = isField ? destinations : destinations.slice(0, 4);
+  const hidden = destinations.length - shown.length;
+
+  const button = (item) =>
+    `<button data-nav="${esc(item.route)}" class="${ctx.path === item.route ? 'is-active' : ''}">
+      <span class="icon">${item.icon}</span>${esc(item.label)}</button>`;
+
+  const rest = hidden
+    ? `<button data-action="toggle-more-nav" aria-expanded="${moreOpen}"
+        class="${!shown.some((i) => i.route === ctx.path) ? 'is-active' : ''}">
+        <span class="icon">${moreOpen ? '✕' : '⋯'}</span>${moreOpen ? 'Close' : 'More'}</button>`
+    : '';
+
+  return shown.map(button).join('') + rest;
+}
+
+/** Every destination, as a sheet over the page, so nothing is unreachable on a phone. */
+function moreNavSheet(ctx) {
+  if (!moreOpen || ctx.user.role === 'field') return '';
+  const items = MANAGER_NAV.map((item) => {
+    if (item.section) return `<div class="more-nav__section">${esc(item.section)}</div>`;
+    const active = ctx.path === item.route || (item.route === 'manager/outlets' && ctx.path === 'outlet');
+    return `<button class="more-nav__link${active ? ' is-active' : ''}" data-nav="${esc(item.route)}">
+      <span class="more-nav__icon">${item.icon}</span>${esc(item.label)}</button>`;
+  }).join('');
+
+  return `<div class="more-nav" role="dialog" aria-label="All sections">
+    <div class="more-nav__sheet">
+      <div class="more-nav__head">
+        <strong>All sections</strong>
+        <button class="btn btn--sm" data-action="toggle-more-nav">✕ Close</button>
+      </div>
+      ${items}
+    </div>
+  </div>`;
 }
 
 /**
@@ -259,6 +299,7 @@ export function render() {
         </header>
         <main class="content${page.narrow ? ' content--narrow' : ''}">${body}</main>
         <nav class="mobile-nav">${mobileNavHtml(ctx)}</nav>
+        ${moreNavSheet(ctx)}
       </div>
     </div>`;
 
@@ -272,11 +313,18 @@ function delegate(root) {
   root.addEventListener('click', (event) => {
     const nav = event.target.closest('[data-nav]');
     if (nav) {
+      moreOpen = false;
       navigate(nav.dataset.nav);
       return;
     }
     const action = event.target.closest('[data-action]');
     if (!action) return;
+
+    if (action.dataset.action === 'toggle-more-nav') {
+      moreOpen = !moreOpen;
+      render();
+      return;
+    }
 
     if (action.dataset.action === 'reset-demo') {
       const { source } = store.dataSource();

@@ -532,65 +532,81 @@ textarea { min-height: 74px; resize: vertical; }
 }
 .ar__layer { position: absolute; inset: 0; }
 
-.ar__box {
+/* A label that sits ABOVE the price it marks and points down at it. Drawn over the price,
+   a rectangle would hide the very ticket the TME is being asked to confirm. */
+.ar__pin {
   position: absolute;
   margin: 0;
   padding: 0;
-  border: 2px solid var(--none);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.1);
+  border: 0;
+  background: none;
   cursor: pointer;
-  min-height: 20px;
+  /* Positioned by the point it aims at: the body sits above, the stem reaches down to it. */
+  transform: translate(-50%, -100%);
   display: block;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  z-index: 1;
 }
-.ar__box--good { border-color: var(--good); }
-.ar__box--watch { border-color: var(--watch); }
-.ar__box--risk { border-color: var(--risk); }
-.ar__box--excluded { opacity: 0.4; border-style: dashed; }
-.ar__box:focus-visible { outline: 3px solid var(--info); outline-offset: 2px; }
+.ar__pin:focus-visible { outline: 3px solid var(--info); outline-offset: 3px; border-radius: 6px; }
+.ar__pin--excluded { opacity: 0.45; }
 
-/* The tag is sized by its own content, not by the rectangle: a narrow box would otherwise
-   ellipsise the SKU name down to one letter, which is the one thing the marker must say.
-   It may therefore overhang its box — an annotation, not a crop. */
+/* One line, because shelf rows are closer together than a two-line label is tall: stacked
+   labels covered each other and the top one could not even be tapped. */
 .ar__tag {
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  min-width: 84px;
-  max-width: max(84px, 100%);
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  line-height: 1.2;
-  font-size: 0.66rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(12, 15, 20, 0.84);
+  align-items: baseline;
+  gap: 5px;
+  line-height: 1.35;
+  font-size: 0.67rem;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1.5px solid var(--none);
+  background: rgba(12, 15, 20, 0.86);
   color: #fff;
   white-space: nowrap;
-  pointer-events: none;
+  text-align: left;
 }
-.ar__line { display: flex; align-items: baseline; gap: 6px; }
 .ar__price { font-weight: 700; font-variant-numeric: tabular-nums; }
 .ar__name {
-  max-width: 100%;
+  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.62rem;
-  opacity: 0.92;
+  font-size: 0.63rem;
+  opacity: 0.93;
 }
-.ar__conf { font-variant-numeric: tabular-nums; font-size: 0.62rem; }
-/* A tapped or focused marker brings its own tag clear of its neighbours. */
-.ar__box:hover, .ar__box:focus-visible { z-index: 2; }
-.ar__box--good .ar__conf { color: #86e0ac; }
-.ar__box--watch .ar__conf { color: #f4c97a; }
-.ar__box--risk .ar__conf { color: #f6a49e; }
+.ar__conf { font-variant-numeric: tabular-nums; font-size: 0.63rem; }
 
-/* Top right: marker tags hang off the left edge of their box, so the right side is the
-   only corner that is reliably clear of them. */
+/* The stem, ending in a dot exactly on the price it was read from. */
+.ar__stem {
+  display: block;
+  width: 0;
+  height: 9px;
+  margin: 0 auto;
+  border-left: 2px solid var(--none);
+  position: relative;
+}
+.ar__stem::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--none);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+
+.ar__pin--good .ar__tag, .ar__pin--good .ar__stem { border-color: var(--good); }
+.ar__pin--good .ar__stem::after { background: var(--good); }
+.ar__pin--good .ar__conf { color: #86e0ac; }
+.ar__pin--watch .ar__tag, .ar__pin--watch .ar__stem { border-color: var(--watch); }
+.ar__pin--watch .ar__stem::after { background: var(--watch); }
+.ar__pin--watch .ar__conf { color: #f4c97a; }
+.ar__pin--risk .ar__tag, .ar__pin--risk .ar__stem { border-color: var(--risk); }
+.ar__pin--risk .ar__stem::after { background: var(--risk); }
+.ar__pin--risk .ar__conf { color: #f6a49e; }
+.ar__pin--manual .ar__tag { border-width: 2.5px; }
+
 .ar__tools {
   position: absolute;
   right: 8px;
@@ -615,10 +631,10 @@ textarea { min-height: 74px; resize: vertical; }
 
 /* Placing mode: a touch that starts on a marker moves it instead of scrolling the page.
    Outside this mode markers must not swallow swipes — they cover most of the photo. */
-.ar--placing .ar__box { touch-action: none; cursor: grab; }
-.ar--placing .ar__box { border-style: dashed; }
-.ar__box--dragging { cursor: grabbing; opacity: 0.85; z-index: 4; }
-.ar__box--manual { border-width: 3px; }
+.ar--placing .ar__pin { touch-action: none; cursor: grab; }
+.ar--placing .ar__tag { border-style: dashed; }
+.ar__pin--dragging { cursor: grabbing; opacity: 0.88; z-index: 4; }
+.ar__pin:hover, .ar__pin:focus-visible { z-index: 3; }
 
 .ar__legend { margin-top: 10px; }
 .ar__keys { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.7rem; margin-bottom: 6px; }
@@ -810,6 +826,59 @@ textarea { min-height: 74px; resize: vertical; }
   .content { padding: 14px; }
   .topbar { padding: 10px 14px; }
   .kpi__value { font-size: 1.5rem; }
+
+  /* Everything the bottom bar has no room for. Without it a manager on a phone could not
+     reach seven of their twelve sections at all. */
+  .more-nav {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(12, 15, 20, 0.45);
+    display: flex;
+    align-items: flex-end;
+  }
+  .more-nav__sheet {
+    width: 100%;
+    max-height: 82vh;
+    overflow-y: auto;
+    background: var(--surface);
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    padding: 8px 8px calc(12px + env(safe-area-inset-bottom));
+    box-shadow: var(--shadow-lg);
+  }
+  .more-nav__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 8px 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+  .more-nav__section {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-faint);
+    padding: 10px 10px 4px;
+  }
+  .more-nav__link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.92rem;
+    color: var(--text);
+    text-align: left;
+    padding: 11px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .more-nav__link.is-active { background: var(--surface-2); color: var(--brand-2); font-weight: 650; }
+  .more-nav__icon { width: 18px; text-align: center; color: var(--text-muted); }
 }
 
 @media print {
