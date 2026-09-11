@@ -11,6 +11,7 @@
  */
 
 import { registerProvider } from './provider.js';
+import { sampleLuminance, vetBoxesAgainstImage } from '../../lib/boxes.js';
 
 const MAX_BYTES = 6 * 1024 * 1024;
 
@@ -26,26 +27,37 @@ async function toDataUrl(file) {
 }
 
 /**
- * Downscales a large photo before upload. A phone camera image is far larger than any
- * vision model needs to read a price list, and the round trip is what a TME waits on.
+ * Downscales a large photo before upload, and keeps a coarse luminance grid of the same
+ * frame for checking the model's coordinates afterwards.
+ *
+ * A phone camera image is far larger than any vision model needs to read a price list, and
+ * the round trip is what a TME waits on. The luminance grid is sampled from the very bytes
+ * that are sent, so a box can be judged against exactly what the model saw.
+ *
+ * @returns {Promise<{dataUrl: string, luma: object|null}>}
  */
-async function downscale(file, maxEdge = 1600, quality = 0.85) {
+async function prepare(file, maxEdge = 1600, quality = 0.85) {
   if (typeof document === 'undefined' || typeof createImageBitmap === 'undefined') {
-    return toDataUrl(file);
+    return { dataUrl: await toDataUrl(file), luma: null };
   }
   try {
     const bitmap = await createImageBitmap(file);
+    const luma = sampleLuminance(bitmap);
+
     const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size <= MAX_BYTES) return toDataUrl(file);
+    if (scale === 1 && file.size <= MAX_BYTES) {
+      bitmap.close?.();
+      return { dataUrl: await toDataUrl(file), luma };
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(bitmap.width * scale);
     canvas.height = Math.round(bitmap.height * scale);
     canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close?.();
-    return canvas.toDataURL('image/jpeg', quality);
+    return { dataUrl: canvas.toDataURL('image/jpeg', quality), luma };
   } catch {
-    return toDataUrl(file);
+    return { dataUrl: await toDataUrl(file), luma: null };
   }
 }
 
@@ -66,7 +78,7 @@ export function createRemoteProvider(descriptor) {
         throw new Error('This model needs the original image file; re-add the photo and retry.');
       }
 
-      const dataUrl = await downscale(image.file);
+      const { dataUrl, luma } = await prepare(image.file);
       const skus = [...(context.jtiSkus ?? []), ...(context.competitorSkus ?? [])].map((s) => ({
         id: s.id,
         name: s.name,
@@ -90,7 +102,11 @@ export function createRemoteProvider(descriptor) {
           'The model did not read any product prices from this image. Try a clearer photo of the price list.',
         );
       }
-      return body.detections;
+
+      // The prices can be right while the coordinates are invented, so the boxes are held
+      // against the photograph before anything is drawn on it.
+      const { detections } = vetBoxesAgainstImage(body.detections, luma);
+      return detections;
     },
   };
 }

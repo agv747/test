@@ -180,6 +180,36 @@ try {
     'tapping a marker opens that detection for correction',
   );
 
+  // A marker that lands off the pack can be dragged onto it.
+  await page.click('[data-action="toggle-overlay-placing"]');
+  await wait(350);
+  check((await page.locator('.ar--placing').count()) === 1, 'markers can be put into placing mode');
+  // Some detections are already open (Review Required expands itself, and a marker was
+  // tapped above), so the test is that dragging changes nothing about what is open.
+  const openBeforeDrag = await page.locator('.detection__detail').count();
+  const target = page.locator('.ar__box').first();
+  const markerBefore = await target.boundingBox();
+  await page.mouse.move(markerBefore.x + markerBefore.width / 2, markerBefore.y + markerBefore.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(markerBefore.x + markerBefore.width / 2 + 40, markerBefore.y + markerBefore.height / 2 + 60, { steps: 8 });
+  await page.mouse.up();
+  await wait(400);
+  const markerAfter = await page.locator('.ar__box').first().boundingBox();
+  const moved = Math.round(markerAfter.y - markerBefore.y);
+  check(moved >= 40, `a marker can be dragged onto the right pack (moved ${moved}px down)`);
+  check(
+    (await page.locator('.ar__legend').innerText()).includes('placed by hand') ||
+      (await page.locator('.ar__box--manual').count()) > 0,
+    'a hand-placed marker is recorded as placed by hand',
+  );
+  check(
+    (await page.locator('.detection__detail').count()) === openBeforeDrag,
+    'dragging a marker does not also open it for correction',
+  );
+  await shot('05d-shelf-overlay-placing');
+  await page.click('[data-action="toggle-overlay-placing"]');
+  await wait(300);
+
   await page.click('[data-action="toggle-overlay-fullscreen"]');
   await wait(350);
   check((await page.locator('.ar--full').count()) === 1, 'the overlay opens full screen');

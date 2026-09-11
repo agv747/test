@@ -298,8 +298,21 @@ test('the prompt asks for a position only when the model can genuinely supply on
   const prompt = buildPrompt(SKUS, 'SGD');
   assert.match(prompt, /"box"/);
   assert.match(prompt, /OPTIONAL/);
-  assert.match(prompt, /Omit it/);
+  assert.match(prompt, /LEAVE "box" OUT/);
   assert.match(prompt, /top to bottom/);
+});
+
+test('the prompt states the coordinate frame instead of assuming the model shares one', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /from the LEFT of the image/);
+  assert.match(prompt, /DOWN from\s+the TOP of the image/);
+  assert.match(prompt, /PRINTED PRICE LABEL/);
+});
+
+test('the prompt names the failure a model actually produced: an even grid', () => {
+  // A model read a shelf correctly and returned a tidy lattice of identical rectangles
+  // sitting above the packs. Naming that shape is cheaper than detecting it afterwards.
+  assert.match(buildPrompt(SKUS, 'SGD'), /even grid of equal rectangles/);
 });
 
 test('the recommended free model has no licence click-through', async () => {
