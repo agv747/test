@@ -36,7 +36,7 @@ import {
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
 import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
-import { BOX_SOURCE_LABEL, shelfOverlay } from './shelfOverlay.js';
+import { BOX_SOURCE_LABEL, bindMarkerDrag, shelfOverlay } from './shelfOverlay.js';
 
 export const narrow = true;
 
@@ -55,6 +55,7 @@ const state = {
   resultsView: 'list',
   overlayImageId: null,
   overlayFullscreen: false,
+  overlayPlacing: false,
   /** Set when a marker is tapped, so mount() can scroll that card into view once. */
   focusDraftId: null,
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
@@ -73,6 +74,7 @@ export function reset() {
   state.resultsView = 'list';
   state.overlayImageId = null;
   state.overlayFullscreen = false;
+  state.overlayPlacing = false;
   state.focusDraftId = null;
   state.action = { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] };
   state.error = null;
@@ -368,6 +370,7 @@ function renderOverlayCard(ctx, { fullscreen = false } = {}) {
   const overlay = shelfOverlay(image, drafts, {
     threshold: ctx.config.confidence_review_threshold,
     fullscreen,
+    placing: state.overlayPlacing,
   });
 
   if (fullscreen) return overlay;
@@ -643,6 +646,17 @@ export function mount(ctx, root) {
     search.setSelectionRange(search.value.length, search.value.length);
   }
 
+  bindMarkerDrag(root, (draftId, box) => {
+    // Where a marker sits is not a correction of what was read, so it leaves the price,
+    // the SKU and the "corrected" flag alone.
+    const idx = state.drafts.findIndex((d) => d.draft_id === draftId);
+    if (idx === -1) return;
+    const next = state.drafts.slice();
+    next[idx] = { ...next[idx], bounding_box: box };
+    state.drafts = next;
+    ctx.render();
+  });
+
   if (state.focusDraftId) {
     // Draft ids contain a colon, so match on the attribute rather than as an id selector.
     const card = root.querySelector(`[id="draft-${state.focusDraftId}"]`);
@@ -708,8 +722,14 @@ export function onAction(action, el, ctx) {
       state.overlayFullscreen = !state.overlayFullscreen;
       ctx.render();
       break;
+    case 'toggle-overlay-placing':
+      state.overlayPlacing = !state.overlayPlacing;
+      ctx.render();
+      break;
     case 'focus-detection': {
       // A marker is a way into the correction form, so open the card and go to it.
+      // While markers are being moved, a tap on one must not also open it.
+      if (state.overlayPlacing) break;
       const id = el.dataset.draft;
       state.expanded.add(id);
       state.overlayFullscreen = false;

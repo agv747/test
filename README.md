@@ -349,14 +349,49 @@ photograph reads as evidence:
 
 | Source | Meaning |
 |---|---|
-| `model` | The model reported coordinates — the rectangle is where it says it looked. |
-| `inferred` | It reported none, so lines are laid out in the order it read them, top to bottom. Approximate. |
+| `model` | The model reported coordinates and they survived the check below. |
+| `inferred` | It reported none — or reported ones that failed the check — so lines are laid out in the order it read them, top to bottom. Approximate. |
+| `manual` | The TME dragged the marker there. Saved with the observation. |
 | `simulated` | The MVP Simulator invented both the prices and the rectangles. |
 
 Most vision models return no coordinates when reading a printed price list, so `inferred` is
-the common case. The prompt asks for an optional `box` and says to omit it when unsure; a box
-that does not describe a positive area is dropped rather than drawn over the wrong line.
-Measured and inferred geometry are never mixed in one picture.
+the common case. The prompt asks for an optional `box`, states the coordinate frame instead of
+assuming the model shares one, and says to leave `box` out of every detection rather than
+estimate. Measured and inferred geometry are never mixed in one picture, and the weakest
+provenance present is what the picture as a whole is allowed to claim.
+
+### Why coordinates are checked against the pixels
+
+A vision model read a shelf photo correctly — right products, right prices — and returned a
+tidy two-by-three lattice of identical rectangles sitting a tenth of the image above the packs
+they claimed to mark. Every number was in range and internally consistent, so no amount of
+geometry could tell they were invented.
+
+The pixels can. `public/app/lib/boxes.js` samples the uploaded frame to a 160px luminance grid
+and measures **edge density** — the fraction of pixels sitting on a steep gradient — inside
+each reported box. A price label or a pack is full of edges; the dark inside of a cabinet has
+almost none. A box below the threshold is discarded, and if every box is discarded the whole
+set falls back to reading order rather than leaving the photo unannotated.
+
+Edge density rather than average contrast, which was tried first and failed: measured on a
+real price list, a legitimate box three times taller than the line it marks scored *below*
+empty shelf on average contrast, because the surplus white swamped the text. It scored 0.078
+against 0.000 on edge density, since surplus background adds no edges to find. Range separates
+them too, but one bright speck carries it — and that is what sensor noise in a dark cabinet is.
+
+The check runs in the browser, because that is the only place the pixels exist: the Worker
+receives a base64 JPEG it cannot decode. Where there is no canvas to read (a tainted canvas, a
+browser that blocks readback) nothing is rejected — a check that could not run is not evidence
+against the model.
+
+### Moving a marker
+
+**✥ Move markers** turns the overlay into a placing surface: drag any marker onto the pack or
+price label it belongs to, and it is recorded as `manual` and saved with the visit. Outside
+that mode a marker is a plain tap target and a touch that starts on one scrolls the page —
+markers cover most of the photo, so making every one of them swallow a swipe would leave the
+page unscrollable on a phone. Moving a marker never touches the price, the SKU, or the
+"corrected" flag: where a detection sits is not a correction of what was read.
 
 ### The recognition percentage
 
@@ -389,6 +424,8 @@ registerProvider({
       confidence: item.confidence,
       // {x, y, w, h} as fractions of the image, plus source: 'model'. Omit it and the
       // shelf overlay lays the detections out in reading order, labelled approximate.
+      // A box that points at a featureless part of the photo is discarded — see
+      // "Why coordinates are checked against the pixels".
       bounding_box: item.box,
       alternatives: item.alternatives,
     }));

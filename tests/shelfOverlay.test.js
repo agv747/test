@@ -121,6 +121,60 @@ test('the weakest provenance present decides what the picture claims', () => {
   assert.equal(boxSource([box('simulated'), box('inferred')]), 'simulated');
   assert.equal(boxSource([box('inferred')]), 'inferred');
   assert.equal(boxSource([{ bounding_box: null }]), 'none');
+
+  // One hand-placed marker must not let the rest borrow its credibility, and one measured
+  // box must not lend its credibility to a picture that is mostly guesswork.
+  assert.equal(boxSource([box('manual'), box('inferred')]), 'inferred');
+  assert.equal(boxSource([box('model'), box('inferred')]), 'inferred');
+  assert.equal(boxSource([box('manual'), box('model')]), 'model');
+  assert.equal(boxSource([box('manual')]), 'manual');
+});
+
+/* ------------------------------------------------------ placing markers by hand */
+
+test('a marker can be identified for dragging and says so to a screen reader', () => {
+  const html = shelfOverlay(IMAGE, [draft()]);
+  assert.match(html, /data-marker="img-1:0"/);
+  assert.match(html, /Tap to correct, drag to place on the pack/);
+});
+
+test('the marker names where its own position came from, not just the picture as a whole', () => {
+  const inferred = shelfOverlay(IMAGE, [
+    draft({ bounding_box: { x: 0, y: 0.1, w: 1, h: 0.2, source: 'inferred' } }),
+  ]);
+  assert.match(inferred, /Approximate — reading order/);
+});
+
+test('placing mode is off until asked for, and says what to do when on', () => {
+  const off = shelfOverlay(IMAGE, [draft()]);
+  assert.match(off, /Move markers/);
+  assert.doesNotMatch(off, /ar--placing/);
+
+  const on = shelfOverlay(IMAGE, [draft()], { placing: true });
+  assert.match(on, /ar--placing/);
+  assert.match(on, /Done moving/);
+  assert.match(on, /Drag any marker onto the pack or price label it belongs to/);
+  assert.match(on, /kept with the visit/);
+});
+
+test('a hand-placed marker is drawn as such', () => {
+  const html = shelfOverlay(IMAGE, [
+    draft({ bounding_box: { x: 0.2, y: 0.3, w: 0.3, h: 0.1, source: 'manual' } }),
+  ]);
+  assert.match(html, /ar__box--manual/);
+  assert.match(html, /Placed by you/);
+});
+
+test('the legend tells the TME they can move a marker that sits wrong', () => {
+  assert.match(BOX_SOURCE_NOTE.model, /Drag a marker/);
+  assert.match(BOX_SOURCE_NOTE.inferred, /Drag a marker/);
+  assert.match(BOX_SOURCE_NOTE.manual, /saved with the visit/);
+});
+
+test('the inferred note admits that rejected positions land here too', () => {
+  // A model whose coordinates were discarded for pointing at empty photo must not look the
+  // same as one that honestly reported nothing.
+  assert.match(BOX_SOURCE_NOTE.inferred, /pointed at empty parts of the photo/);
 });
 
 test('every provenance has a note and a short label — none can render as undefined', () => {

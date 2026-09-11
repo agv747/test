@@ -26,15 +26,17 @@ import { CONFIDENCE_NOTE, confidenceTone, confidenceWord, esc, money } from './d
 /** How the rectangles were arrived at. Never omitted: an inferred box invites false trust. */
 export const BOX_SOURCE_NOTE = {
   model:
-    'Positions reported by the recognition model. Tap a marker to correct the SKU or the price.',
+    'Positions reported by the recognition model and checked against the photo. Drag a marker ' +
+    'if it sits off the pack; tap it to correct the SKU or the price.',
   inferred:
-    'Approximate positions. The model read the lines but did not report where each one sits, ' +
-    'so they are laid out in the order it read them, top to bottom. Use the markers to work ' +
-    'through the list, not to prove which label a price came from.',
+    'Approximate positions. The model read the lines but did not report where each one sits — ' +
+    'or reported positions that pointed at empty parts of the photo — so they are laid out in ' +
+    'the order it read them, top to bottom. Drag a marker onto the pack it belongs to.',
   simulated:
     'Simulated positions. The MVP Simulator does not look at the image — both the prices and ' +
     'the rectangles are generated from the catalogue. Select a vision model in Admin to read ' +
     'this photo for real.',
+  manual: 'Positions you placed by hand. These are saved with the visit.',
   none: 'The recognition provider reported no positions for this image.',
 };
 
@@ -43,15 +45,22 @@ export const BOX_SOURCE_LABEL = {
   model: 'Reported by the model',
   inferred: 'Approximate — reading order',
   simulated: 'Simulated',
+  manual: 'Placed by you',
   none: 'Not reported',
 };
 
-/** The dominant provenance across the drafts drawn on one image. */
+/**
+ * The provenance the picture as a whole can claim.
+ *
+ * The weakest one present wins, so one hand-placed marker never upgrades the rest and one
+ * inferred band never gets to borrow the credibility of a measured box.
+ */
 export function boxSource(drafts) {
   const sources = new Set(drafts.map((d) => d.bounding_box?.source).filter(Boolean));
-  if (sources.has('model')) return 'model';
   if (sources.has('simulated')) return 'simulated';
   if (sources.has('inferred')) return 'inferred';
+  if (sources.has('model')) return 'model';
+  if (sources.has('manual')) return 'manual';
   return 'none';
 }
 
@@ -74,10 +83,10 @@ function marker(draft, index, threshold) {
   const style = `left:${box.x * 100}%;top:${box.y * 100}%;width:${box.w * 100}%;height:${box.h * 100}%`;
 
   return `<button type="button"
-    class="ar__box ar__box--${tone}${draft.excluded ? ' ar__box--excluded' : ''}"
+    class="ar__box ar__box--${tone}${draft.excluded ? ' ar__box--excluded' : ''}${box.source === 'manual' ? ' ar__box--manual' : ''}"
     style="${style}"
-    data-action="focus-detection" data-draft="${esc(draft.draft_id)}"
-    aria-label="${esc(`${index}. ${name}, ${money(price)}, recognition ${pct}, ${word}. Open to correct.`)}">
+    data-action="focus-detection" data-draft="${esc(draft.draft_id)}" data-marker="${esc(draft.draft_id)}"
+    aria-label="${esc(`${index}. ${name}, ${money(price)}, recognition ${pct}, ${word}. ${BOX_SOURCE_LABEL[box.source ?? 'none']}. Tap to correct, drag to place on the pack.`)}">
     <span class="ar__tag">
       <span class="ar__line">
         <span class="ar__price">${esc(Number.isFinite(price) ? price.toFixed(2) : '—')}</span>
@@ -91,10 +100,10 @@ function marker(draft, index, threshold) {
 /**
  * @param {{id:string, name:string, previewUrl:string|null}} image
  * @param {object[]} drafts drafts belonging to that image, in detection order
- * @param {{threshold?:number, fullscreen?:boolean}} options
+ * @param {{threshold?:number, fullscreen?:boolean, placing?:boolean}} options
  */
 export function shelfOverlay(image, drafts, options = {}) {
-  const { threshold = 0.75, fullscreen = false } = options;
+  const { threshold = 0.75, fullscreen = false, placing = false } = options;
   const placed = drafts.filter((d) => d.bounding_box);
   const source = boxSource(drafts);
 
@@ -103,18 +112,109 @@ export function shelfOverlay(image, drafts, options = {}) {
       annotated. Retake the photo to use the shelf overlay.</div>`;
   }
 
-  return `<div class="ar${fullscreen ? ' ar--full' : ''}">
+  return `<div class="ar${fullscreen ? ' ar--full' : ''}${placing ? ' ar--placing' : ''}">
     <div class="ar__frame">
       <img class="ar__img" src="${esc(image.previewUrl)}" alt="${esc(`Shelf photo ${image.name}, with ${placed.length} recognised price${placed.length === 1 ? '' : 's'} marked`)}" />
       <div class="ar__layer">
         ${placed.map((d, i) => marker(d, i + 1, threshold)).join('')}
       </div>
     </div>
-    <button type="button" class="ar__expand" data-action="toggle-overlay-fullscreen">
-      ${fullscreen ? '✕ Close' : '⤢ Full screen'}
-    </button>
+    <div class="ar__tools">
+      <button type="button" class="ar__tool${placing ? ' ar__tool--on' : ''}"
+        data-action="toggle-overlay-placing" aria-pressed="${placing}">
+        ${placing ? '✓ Done moving' : '✥ Move markers'}
+      </button>
+      <button type="button" class="ar__tool" data-action="toggle-overlay-fullscreen">
+        ${fullscreen ? '✕ Close' : '⤢ Full screen'}
+      </button>
+    </div>
   </div>
+  ${placing ? '<p class="xsmall muted mt">Drag any marker onto the pack or price label it belongs to. Positions you set are kept with the visit.</p>' : ''}
   ${fullscreen ? '' : overlayLegend(source, placed.length, drafts.length)}`;
+}
+
+/* ------------------------------------------------------------- placing by hand */
+
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Lets the TME drag a marker onto the pack it belongs to.
+ *
+ * Only active while the overlay is in placing mode. Outside it, a marker is a plain tap
+ * target and a touch that starts on one scrolls the page — markers cover most of the photo,
+ * so making every one of them swallow a swipe would leave the page unscrollable on a phone.
+ *
+ * @param {HTMLElement} root  the rendered page
+ * @param {(draftId: string, box: {x,y,w,h,source:'manual'}) => void} onPlaced
+ */
+export function bindMarkerDrag(root, onPlaced) {
+  const layer = root.querySelector('.ar--placing .ar__layer');
+  if (!layer) return;
+
+  let drag = null;
+
+  layer.addEventListener('pointerdown', (event) => {
+    const marker = event.target.closest('.ar__box');
+    if (!marker) return;
+    const bounds = layer.getBoundingClientRect();
+    drag = {
+      marker,
+      id: marker.dataset.marker,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: marker.offsetLeft,
+      top: marker.offsetTop,
+      bounds,
+      moved: false,
+    };
+    marker.setPointerCapture?.(event.pointerId);
+  });
+
+  layer.addEventListener('pointermove', (event) => {
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    // A few pixels of travel is a tap with a shaky thumb, not an attempt to move anything.
+    if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+
+    drag.moved = true;
+    event.preventDefault();
+    drag.marker.classList.add('ar__box--dragging');
+    drag.marker.style.left = `${clamp01((drag.left + dx) / drag.bounds.width) * 100}%`;
+    drag.marker.style.top = `${clamp01((drag.top + dy) / drag.bounds.height) * 100}%`;
+  });
+
+  const finish = () => {
+    if (!drag) return;
+    const { marker, moved, id, bounds } = drag;
+    drag = null;
+    marker.classList.remove('ar__box--dragging');
+    if (!moved) return;
+
+    onPlaced(id, {
+      x: clamp01(marker.offsetLeft / bounds.width),
+      y: clamp01(marker.offsetTop / bounds.height),
+      w: marker.offsetWidth / bounds.width,
+      h: marker.offsetHeight / bounds.height,
+      source: 'manual',
+    });
+  };
+
+  layer.addEventListener('pointerup', finish);
+  layer.addEventListener('pointercancel', finish);
+
+  // A drag must not also count as a tap that opens the detection for correction.
+  layer.addEventListener(
+    'click',
+    (event) => {
+      if (!event.target.closest('.ar__box')) return;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true,
+  );
 }
 
 function overlayLegend(source, placedCount, totalCount) {
