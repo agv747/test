@@ -1003,3 +1003,50 @@ textarea { min-height: 74px; resize: vertical; }
   .sidebar, .topbar, .mobile-nav, .btn { display: none !important; }
   .content { padding: 0; }
 }
+
+/* ------------------------------------------------------------ GM Overview */
+/*
+ * The first thirty seconds. Four metrics, three signals, one scope line — the acceptance test
+ * is that all of it is visible at 1366×768 without scrolling past a filter form, so the
+ * vertical budget here is deliberate rather than incidental.
+ */
+.gm-scope {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.gm-scope__main { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.85rem; }
+.gm-scope__market { font-weight: 650; }
+.gm-scope__sep { color: var(--text-muted); }
+.gm-scope .toolbar { margin: 0; margin-left: auto; }
+.tag--demo { background: var(--watch-bg); border-color: var(--watch-border); color: var(--watch); font-weight: 650; }
+
+.signal { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 9px; background: var(--surface); }
+.signal--High { border-left: 4px solid var(--risk); }
+.signal--Medium { border-left: 4px solid var(--watch); }
+.signal--Low { border-left: 4px solid var(--border); }
+.signal__head { display: flex; gap: 12px; align-items: flex-start; padding: 11px 13px; cursor: pointer; }
+.signal__head:hover { background: var(--surface-2); }
+.signal__body { flex: 1; min-width: 0; }
+.signal__title { font-weight: 650; font-size: 0.92rem; }
+.signal__scope { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.signal__evidence { font-size: 0.8rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.signal__meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-muted); margin-top: 5px; }
+/* Age and overdue carry a word as well as the colour, so neither depends on seeing red. */
+.signal__stale { color: var(--risk); font-weight: 600; }
+.signal__side { text-align: right; display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+.signal__outlets { border-top: 1px solid var(--border); padding: 10px 13px; }
+.signal__outlets table { font-size: 0.78rem; }
+.signal__outlets .toolbar { margin-top: 8px; }
+
+@media (max-width: 720px) {
+  .gm-scope .toolbar { margin-left: 0; width: 100%; }
+  .signal__head { flex-direction: column; }
+  .signal__side { flex-direction: row; align-items: center; text-align: left; }
+}

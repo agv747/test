@@ -64,6 +64,21 @@ export const CONFIDENCE_NOTE =
   'Recognition % is how certain the model is that it read both the product name and the price correctly. ' +
   'It says nothing about whether the price itself is good or bad.';
 
+/**
+ * What the number is not.
+ *
+ * A model's own confidence is a self-report, and in the simulator it is not even that — it is
+ * a value the fixture was written with. Either way it is not measured accuracy: a model can be
+ * confidently wrong, and under plain packaging, where two variants differ only by their price
+ * ticket, it routinely is. Establishing real accuracy takes a labelled validation set of local
+ * images, scored against what the pack actually was, with false confidence counted separately.
+ * Until that exists there is no accuracy figure in this application, and this note is why.
+ */
+export const CONFIDENCE_NOT_ACCURACY_NOTE =
+  'This is the model reporting on itself, not measured accuracy. A model can be confidently ' +
+  'wrong. Real accuracy has to be established on a labelled set of local images, with ' +
+  'confidently-wrong readings counted separately.';
+
 export function confidenceTone(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
   if (confidence === null || confidence === undefined) return 'none';
   if (confidence >= 0.9) return 'good';

@@ -25,6 +25,7 @@ import {
   MATRIX_INTERPRETATION,
   RANGE_BUCKET,
   RANGE_BUCKET_LABELS,
+  RELATIVE_POSITION_NOTE,
   COMPETITIVE_BUCKET,
 } from '../services/pricePositionService.js';
 import { dateTimeLabel } from '../lib/format.js';
@@ -127,7 +128,9 @@ function matrixCard(a) {
     <div class="table-wrap" style="border:0">
       <table class="matrix"><thead>${head}</thead><tbody>${body}</tbody></table>
     </div>
-    <p class="xsmall muted mt">Cell meanings are configurable business interpretations, not fixed judgements. Click any cell to drill into the underlying observations.</p>
+    <p class="xsmall muted mt">${esc(RELATIVE_POSITION_NOTE)}
+      Cell meanings are configurable business interpretations, not fixed judgements. Click any cell to
+      drill into the underlying observations.</p>
   </div>`;
 }
 

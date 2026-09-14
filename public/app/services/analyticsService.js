@@ -24,6 +24,7 @@ import {
 } from './opportunityService.js';
 import { rangeDeviation, priceIndexDeviation } from './pricePositionService.js';
 import { applySnapshot, supersededByPending } from './snapshotService.js';
+import { buildSignals } from './signalService.js';
 import { OUTCOME, classifyOutcome, movementSource, summariseOutcomes } from './fieldOutcomeService.js';
 import { calculateCoverage, outletsInScope } from './coverageService.js';
 
@@ -362,7 +363,13 @@ export function buildPriceMatrix(observations) {
  * and whether it keeps recurring, can only come from the full history.
  */
 export function deriveOpportunities(observations, context, config, now) {
-  const { competitorMoves = [], dispersionFlags = new Set(), fieldActions = [], current = null } = context;
+  const {
+    competitorMoves = [],
+    dispersionFlags = new Set(),
+    fieldActions = [],
+    current = null,
+    states = {},
+  } = context;
   const movedSkus = new Set(competitorMoves.flatMap((m) => m.affected_jti_sku_ids));
   // Null means "no snapshot supplied": every observation counts, as before.
   const eligible = current ? new Set(current.map((o) => o.id)) : null;
@@ -468,12 +475,11 @@ export function deriveOpportunities(observations, context, config, now) {
       priority_score: priority.score,
       priority_label: priority.label,
       priority_components: priority.components,
-      assigned_user_id: latest.outlet?.assigned_tme_id ?? null,
       last_action: lastAction ?? null,
       observations: list,
-      status: 'New',
       recognition_confidence: latest.recognition_confidence,
       freshness: latest.freshness,
+      ...lifecycle(`opp-${key}`, states, lastAction, latest, now),
     };
     opp.reason = opportunityReason(opp);
     opp.suggested_action = suggestedAction(opp);
@@ -482,6 +488,49 @@ export function deriveOpportunities(observations, context, config, now) {
 
   opportunities.sort((a, b) => b.priority_score - a.priority_score);
   return opportunities;
+}
+
+/**
+ * Who has this, what the next step is, and whether it is actually still open.
+ *
+ * Every opportunity used to be labelled "New", including one at Punggol with eighty-seven days
+ * of history and a recorded "Follow-up required". A GM reading that screen cannot tell a case
+ * nobody has touched from one somebody is already three visits into, which is exactly the
+ * distinction that decides what to do next.
+ *
+ * Two sources settle it. A status somebody set by hand wins outright — a person looked at the
+ * case and said where it stood. Otherwise the last field action at that outlet says whether
+ * anybody has engaged, and an overdue follow-up date says the promised step has slipped.
+ *
+ * `days_open` deliberately stays the age of the current deviating run, not of the oldest
+ * deviation ever seen. A case that was resolved and recurred is a new episode, and dating it
+ * from the first historical deviation would claim months of neglect that did not happen.
+ */
+function lifecycle(id, states, lastAction, latest, now) {
+  const stored = states?.[id] ?? null;
+  const overdue = Boolean(
+    lastAction?.follow_up_date && toDate(lastAction.follow_up_date) < toDate(now),
+  );
+
+  const status = stored?.status
+    ? stored.status
+    : overdue
+      ? 'Follow-up overdue'
+      : lastAction
+        ? 'Engaged'
+        : 'New';
+
+  return {
+    status,
+    /** Set by a person, rather than inferred from the last action at the outlet. */
+    status_set_by_hand: Boolean(stored?.status),
+    assigned_user_id: stored?.assigned_user_id ?? latest.outlet?.assigned_tme_id ?? null,
+    next_step: lastAction?.action_type ?? null,
+    next_step_at: lastAction?.action_at ?? null,
+    due_date: lastAction?.follow_up_date ?? null,
+    overdue,
+    state_updated_at: stored?.updated_at ?? null,
+  };
 }
 
 function countAffectedOutlets(observations, skuId) {
@@ -540,7 +589,28 @@ export function calculateDispersion(observations, config, groupBy = 'sku_id') {
   return rows;
 }
 
-/** §13 — material competitor price movements within the lookback window. */
+/**
+ * §13 — observed retail price movement for a competitor SKU (GM review §G).
+ *
+ * Two things were wrong with the version this replaces.
+ *
+ * The headline impact was one blended Price Index — 101.6 — computed from the median of every
+ * JTI price mapped to the moving competitor. Winston Red, Camel Filters and LD Red map to Pall
+ * Mall Red, and they sit at three different price levels with three different intended
+ * corridors. One number across all of them is the position of no SKU at all: an index that is
+ * comfortable for a mainstream SKU is a problem for a value one. The event stays shared; the
+ * effect is now reported per mapped SKU against that mapping's own corridor.
+ *
+ * And the movement itself was a median of everything seen before against a median of everything
+ * seen after. Those are different sets of outlets, so a change in which shops were visited
+ * reads as a change in price. The movement is now measured across outlets observed in BOTH
+ * periods, with the paired count and its coverage of the whole reported beside it — if the
+ * pairing is thin, that is the first thing to see.
+ *
+ * The event is named for what it is: retail prices observed to have moved. Retailers set their
+ * own prices, so a set of shop-floor observations cannot establish a manufacturer's pricing
+ * decision, however tempting the inference.
+ */
 export function detectCompetitorMoves(observations, data, config, now) {
   const { min_abs_change, min_pct_change, lookback_days } = config.competitor_move;
   const competitorObs = observations.filter((o) => !o.is_jti);
@@ -560,42 +630,96 @@ export function detectCompetitorMoves(observations, data, config, now) {
     const after = list.filter((o) => toDate(o.observed_at) >= cutoff);
     if (!before.length || !after.length) continue;
 
+    const paired = pairedChange(before, after);
+    // Unpaired medians are kept only to show what the naive comparison would have said, and
+    // are never the reported movement.
     const previous = round(median(before.map((o) => o.confirmed_price)), 2);
     const current = round(median(after.map((o) => o.confirmed_price)), 2);
-    const change = round(current - previous, 2);
-    const pctChange = previous ? round((change / previous) * 100, 2) : 0;
+
+    const change = paired.outlets ? paired.change : round(current - previous, 2);
+    const base = paired.outlets ? paired.previous : previous;
+    const pctChange = base ? round((change / base) * 100, 2) : 0;
     if (Math.abs(change) < min_abs_change && Math.abs(pctChange) < min_pct_change) continue;
 
     const affectedMappings = mappings.filter((m) => m.competitor_sku_id === skuId);
     const affectedJtiSkuIds = [...new Set(affectedMappings.map((m) => m.jti_sku_id))];
+
+    // One row per mapped JTI SKU, each against its own corridor. Deliberately not summed.
+    const perSku = affectedMappings.map((mapping) => {
+      const jtiObs = observations.filter(
+        (o) => o.is_jti && o.sku_id === mapping.jti_sku_id && toDate(o.observed_at) >= cutoff,
+      );
+      const jtiMedian = round(median(jtiObs.map((o) => o.confirmed_price)), 2);
+      const gap = jtiMedian !== null && current !== null ? round(jtiMedian - current, 2) : null;
+      const index = jtiMedian !== null && current ? round((jtiMedian / current) * 100, 1) : null;
+
+      const insideGap =
+        gap === null || !Number.isFinite(mapping.desired_gap_min) || !Number.isFinite(mapping.desired_gap_max)
+          ? null
+          : gap >= mapping.desired_gap_min && gap <= mapping.desired_gap_max;
+      const insideIndex =
+        index === null ||
+        !Number.isFinite(mapping.desired_price_index_min) ||
+        !Number.isFinite(mapping.desired_price_index_max)
+          ? null
+          : index >= mapping.desired_price_index_min && index <= mapping.desired_price_index_max;
+
+      const sku = data.skus.find((x) => x.id === mapping.jti_sku_id);
+      return {
+        jti_sku_id: mapping.jti_sku_id,
+        jti_sku_name: sku?.name ?? mapping.jti_sku_id,
+        is_strategic: Boolean(sku?.is_strategic),
+        mapping_id: mapping.id,
+        mapping_priority: mapping.mapping_priority,
+        jti_median: jtiMedian,
+        gap,
+        price_index: index,
+        desired_gap_min: mapping.desired_gap_min,
+        desired_gap_max: mapping.desired_gap_max,
+        desired_price_index_min: mapping.desired_price_index_min,
+        desired_price_index_max: mapping.desired_price_index_max,
+        inside_gap: insideGap,
+        inside_index: insideIndex,
+        outlets: new Set(jtiObs.map((o) => o.outlet_id)).size,
+        observations: jtiObs.length,
+      };
+    });
+    perSku.sort((a, b) => Number(b.is_strategic) - Number(a.is_strategic) || b.mapping_priority - a.mapping_priority);
+
     const affectedJtiObs = observations.filter(
       (o) => o.is_jti && affectedJtiSkuIds.includes(o.sku_id) && toDate(o.observed_at) >= cutoff,
     );
-    const jtiMedian = round(median(affectedJtiObs.map((o) => o.confirmed_price)), 2);
-    const newGap = jtiMedian !== null && current !== null ? round(jtiMedian - current, 2) : null;
-    const newIndex =
-      jtiMedian !== null && current ? round((jtiMedian / current) * 100, 1) : null;
-
     const strategicAffected = affectedJtiObs.some((o) => o.is_strategic);
-    const magnitude = Math.abs(pctChange) * (strategicAffected ? config.competitor_move.strategic_mapping_weight : 1);
+    const magnitude =
+      Math.abs(pctChange) * (strategicAffected ? config.competitor_move.strategic_mapping_weight : 1);
 
     moves.push({
       competitor_sku_id: skuId,
       competitor_sku_name: after[0].sku_name,
       competitor_brand: after[0].brand_name,
       competitor_company: after[0].company,
-      previous_price: previous,
-      current_price: current,
+      /** Named for what was observed, not for a decision that was not. */
+      label: `Observed retail price movement for ${after[0].sku_name}`,
+      previous_price: paired.outlets ? paired.previous : previous,
+      current_price: paired.outlets ? paired.current : current,
       change,
       pct_change: pctChange,
+      /** How the movement was measured, so a thin pairing is visible rather than implied. */
+      paired_outlets: paired.outlets,
+      comparable_outlets: paired.comparable,
+      paired_coverage_pct: paired.comparable ? round((paired.outlets / paired.comparable) * 100, 1) : null,
+      unpaired_previous: previous,
+      unpaired_current: current,
+      basis: paired.outlets ? 'outlets observed in both periods' : 'all observations in each period (no paired outlets)',
+
       affected_jti_sku_ids: affectedJtiSkuIds,
       affected_jti_sku_names: affectedJtiSkuIds.map(
-        (id) => data.skus.find((s) => s.id === id)?.name ?? id,
+        (id) => data.skus.find((x) => x.id === id)?.name ?? id,
       ),
+      /** The effect on each mapped JTI SKU, against that mapping's own intended corridor. */
+      per_sku: perSku,
       affected_outlets: new Set(affectedJtiObs.map((o) => o.outlet_id)).size,
       affected_observations: affectedJtiObs.length,
-      new_gap: newGap,
-      new_price_index: newIndex,
       strategic_affected: strategicAffected,
       magnitude: round(magnitude, 2),
       priority: magnitude >= 6 ? 'High' : magnitude >= 3 ? 'Medium' : 'Low',
@@ -605,6 +729,40 @@ export function detectCompetitorMoves(observations, data, config, now) {
 
   moves.sort((a, b) => b.magnitude - a.magnitude);
   return moves;
+}
+
+/**
+ * The price change across outlets seen in BOTH periods.
+ *
+ * Comparing all-of-before against all-of-after measures the visit schedule as much as the
+ * shelf: drop two cheap outlets from the later round and the "price" rises without anything
+ * moving. Pairing by outlet removes composition from the comparison, and the count of pairs is
+ * reported so a change resting on three shops is not read as a market movement.
+ */
+function pairedChange(before, after) {
+  const latest = (list) => {
+    const byOutlet = new Map();
+    for (const o of list) {
+      const held = byOutlet.get(o.outlet_id);
+      if (!held || toDate(o.observed_at) > toDate(held.observed_at)) byOutlet.set(o.outlet_id, o);
+    }
+    return byOutlet;
+  };
+  const first = latest(before);
+  const second = latest(after);
+  const shared = [...second.keys()].filter((id) => first.has(id));
+  const comparable = new Set([...first.keys(), ...second.keys()]).size;
+
+  if (!shared.length) return { outlets: 0, comparable, previous: null, current: null, change: null };
+
+  const deltas = shared.map((id) => second.get(id).confirmed_price - first.get(id).confirmed_price);
+  return {
+    outlets: shared.length,
+    comparable,
+    previous: round(median(shared.map((id) => first.get(id).confirmed_price)), 2),
+    current: round(median(shared.map((id) => second.get(id).confirmed_price)), 2),
+    change: round(median(deltas), 2),
+  };
 }
 
 /** §11.2, §13 — time series of medians for a SKU (and its mapped competitor). */
@@ -637,48 +795,143 @@ export function buildTimeSeries(observations, granularity = 'week') {
     .sort((a, b) => a.period.localeCompare(b.period));
 }
 
-/** §12 — price ladder built on median observed retail price. */
+/**
+ * §12 — the observed price distribution per comparable SKU (GM review §F).
+ *
+ * This used to be a ladder of filled bars, each as long as its SKU's median price, on an axis
+ * with no numbers on it. Two things were wrong with that. A bar whose length encodes a value
+ * starting near SGD 12 exaggerates every difference, because the eye reads length from zero
+ * and the axis did not start there. And a median on its own says nothing about spread: one SKU
+ * priced identically in twenty-four outlets and another ranging over a dollar looked the same.
+ * Dispersion across outlets is the whole point of the screen.
+ *
+ * So each row now carries its actual distribution — P10–P90, P25–P75 and the median — to be
+ * drawn on one shared, labelled SGD axis. Three things follow from doing it honestly:
+ *
+ *   One observation per outlet. Ten visits to one shop must not weight it ten times in a
+ *   percentile, so the rung is built from the latest reading per outlet–SKU–pack.
+ *
+ *   Percentiles need a sample. Below `smallSample` the row reports its individual values and
+ *   its count instead, because a P10 of five numbers is not a stable tenth percentile.
+ *
+ *   A recommended band is only a band if there is one. Outlet-specific rules mean the same SKU
+ *   can carry several; merging them into one average corridor invents a reference nobody set,
+ *   so the distinct rules are counted and the band is withheld when they disagree.
+ */
 export function buildPriceLadder(observations, config, options = {}) {
-  const { include = 'all' } = options;
+  const { include = 'all', smallSample = 8 } = options;
+
+  // Pack configuration is part of the identity, not an attribute: SGD 14.20 for a pack of 20
+  // and for any other configuration are not two readings of the same thing.
   const groups = new Map();
   for (const o of observations) {
     if (include === 'jti' && !o.is_jti) continue;
     if (include === 'competitor' && o.is_jti) continue;
-    if (!groups.has(o.sku_id)) groups.set(o.sku_id, []);
-    groups.get(o.sku_id).push(o);
+    if (!Number.isFinite(o.confirmed_price)) continue;
+    const pack = o.sticks_per_pack_snapshot ?? o.sku?.sticks_per_pack ?? null;
+    const key = `${o.sku_id}|${pack ?? 'unknown'}`;
+    if (!groups.has(key)) groups.set(key, { pack, list: [] });
+    groups.get(key).list.push(o);
   }
+
   const rungs = [];
-  for (const [skuId, list] of groups) {
+  for (const [key, { pack, list }] of groups) {
+    // Latest per outlet: a percentile over repeat visits measures visit frequency, not price.
+    const perOutlet = new Map();
+    for (const o of list) {
+      const held = perOutlet.get(o.outlet_id);
+      if (!held || toDate(o.observed_at) > toDate(held.observed_at)) perOutlet.set(o.outlet_id, o);
+    }
+    const outletLevel = [...perOutlet.values()];
+    const prices = outletLevel.map((o) => o.confirmed_price);
+    const stats = describe(prices);
+    if (!stats) continue;
+
     const first = list[0];
-    const stats = describe(list.map((o) => o.confirmed_price));
+
     /**
-     * The recommendation shown on the ladder is the MEDIAN of the snapshots in scope, not
-     * the value from an arbitrary observation. A filtered range can span a rule change or
-     * several territory overrides, and the median is the representative figure across
-     * whatever mix the current filters produce.
+     * The recommended band, but only where the rules in scope agree on one.
+     *
+     * A filtered range can span a rule change or several outlet overrides. Averaging those
+     * into a single corridor draws a reference line the business never set, which is worse
+     * than drawing none: it is unfalsifiable on the screen.
      */
-    const snapshotMedian = (key) => {
-      const values = list.map((o) => o[key]).filter((v) => Number.isFinite(v));
-      return values.length ? round(median(values), 2) : null;
-    };
+    const bands = new Map();
+    for (const o of outletLevel) {
+      if (!Number.isFinite(o.recommended_min_snapshot) || !Number.isFinite(o.recommended_max_snapshot)) continue;
+      bands.set(`${o.recommended_min_snapshot}|${o.recommended_max_snapshot}`, {
+        min: o.recommended_min_snapshot,
+        max: o.recommended_max_snapshot,
+        recommended: o.recommended_price_snapshot ?? null,
+      });
+    }
+    const distinctBands = [...bands.values()];
+    const band = distinctBands.length === 1 ? distinctBands[0] : null;
+
     rungs.push({
-      sku_id: skuId,
+      key,
+      sku_id: first.sku_id,
       sku_name: first.sku_name,
       brand_name: first.brand_name,
       company: first.company,
       is_jti: first.is_jti,
       is_strategic: first.is_strategic,
+      sticks_per_pack: pack,
+      pack_type: first.pack_type_snapshot ?? first.sku?.pack_type ?? null,
+
+      stats,
+      /** Every outlet-level price, so a small sample can be drawn as its own points. */
+      values: prices.slice().sort((a, b) => a - b),
+      small_sample: stats.count < smallSample,
+
       median_price: round(stats.median, 2),
-      recommended_price: snapshotMedian('recommended_price_snapshot'),
-      recommended_min: snapshotMedian('recommended_min_snapshot'),
-      recommended_max: snapshotMedian('recommended_max_snapshot'),
-      price_index: first.is_jti ? round(median(list.map((o) => o.evaluation?.priceIndex).filter(Number.isFinite)), 1) : null,
-      observations: stats.count,
-      outlets: new Set(list.map((o) => o.outlet_id)).size,
+      p10: round(stats.p10, 2),
+      p25: round(stats.p25, 2),
+      p75: round(stats.p75, 2),
+      p90: round(stats.p90, 2),
+
+      recommended_price: band?.recommended ?? null,
+      recommended_min: band?.min ?? null,
+      recommended_max: band?.max ?? null,
+      /** More than one rule applies in this scope; no single corridor is shown. */
+      recommendation_variants: distinctBands.length,
+
+      price_index: first.is_jti
+        ? round(median(outletLevel.map((o) => o.evaluation?.priceIndex).filter(Number.isFinite)), 1)
+        : null,
+
+      observations: list.length,
+      outlets: outletLevel.length,
+      freshest: outletLevel.reduce(
+        (latest, o) => (!latest || toDate(o.observed_at) > toDate(latest) ? o.observed_at : latest),
+        null,
+      ),
+      oldest: outletLevel.reduce(
+        (first_, o) => (!first_ || toDate(o.observed_at) < toDate(first_) ? o.observed_at : first_),
+        null,
+      ),
     });
   }
+
   rungs.sort((a, b) => b.median_price - a.median_price);
-  return { rungs, insights: dedupe(ladderInsights(rungs, config)) };
+
+  // One axis for every row, so two intervals can be compared by looking at them.
+  const lows = rungs.flatMap((r) => [r.p10, r.recommended_min].filter(Number.isFinite));
+  const highs = rungs.flatMap((r) => [r.p90, r.recommended_max].filter(Number.isFinite));
+  const axis = rungs.length
+    ? { min: Math.floor(Math.min(...lows) * 2) / 2, max: Math.ceil(Math.max(...highs) * 2) / 2 }
+    : null;
+
+  const packs = new Set(rungs.map((r) => r.sticks_per_pack ?? 'unknown'));
+
+  return {
+    rungs,
+    axis,
+    /** More than one pack configuration is on screen; rows are never compared across them. */
+    mixed_packs: packs.size > 1,
+    outlet_level: true,
+    insights: dedupe(ladderInsights(rungs, config)),
+  };
 }
 
 /** Several adjacent rung pairs can produce the same observation; report it once. */
@@ -729,13 +982,28 @@ function ladderInsights(rungs, config) {
     }
   }
 
+  /**
+   * Where the prices sit, stated as where the prices sit.
+   *
+   * This used to read "Premium position under pressure", derived from nothing more than
+   * Marlboro's median sitting above the highest JTI SKU. Marlboro is a premium brand; JTI's
+   * Singapore portfolio tops out at Core. That arrangement is the architecture working, not
+   * evidence of pressure on it — and "under pressure" is a claim about a change, which a
+   * single snapshot of two medians cannot support. Establishing it needs an approved intended
+   * architecture, a mapping, comparable outlets and a movement against a base period.
+   *
+   * So the observation is kept and the conclusion is dropped.
+   */
   const topJti = jti[0];
   const topCompetitor = competitor[0];
   if (topJti && topCompetitor && topCompetitor.median_price > topJti.median_price) {
     insights.push({
       tone: 'watch',
-      title: 'Premium position under pressure',
-      detail: `${topCompetitor.sku_name} (SGD ${topCompetitor.median_price.toFixed(2)}) is priced above the highest observed JTI SKU ${topJti.sku_name}.`,
+      title: 'Competitor median above the highest observed JTI SKU',
+      detail:
+        `${topCompetitor.sku_name} (SGD ${topCompetitor.median_price.toFixed(2)}) sits above ` +
+        `${topJti.sku_name} (SGD ${topJti.median_price.toFixed(2)}). Descriptive only: whether this ` +
+        'is a deviation depends on an approved intended architecture and a comparison against a base period.',
     });
   }
 
@@ -743,9 +1011,13 @@ function ladderInsights(rungs, config) {
   const competitorCore = competitor.find((c) => /core/i.test(c.sku_name));
   if (valueJti && competitorCore && valueJti.median_price > competitorCore.median_price) {
     insights.push({
-      tone: 'risk',
-      title: 'Value SKU priced above competitor core',
-      detail: `${valueJti.sku_name} (SGD ${valueJti.median_price.toFixed(2)}) is above ${competitorCore.sku_name} (SGD ${competitorCore.median_price.toFixed(2)}).`,
+      tone: 'watch',
+      title: 'Lowest-priced JTI SKU above a competitor core SKU',
+      detail:
+        `${valueJti.sku_name} (SGD ${valueJti.median_price.toFixed(2)}) is above ` +
+        `${competitorCore.sku_name} (SGD ${competitorCore.median_price.toFixed(2)}). ` +
+        'A lower JTI price is not automatically a better position: different tiers carry different ' +
+        'approved reference points, and only the configured mapping settles this one.',
     });
   }
   return insights;
@@ -1035,7 +1307,13 @@ export function buildAnalytics(data, filters, config, now = new Date().toISOStri
   const dispersionFlags = new Set(dispersion.filter((d) => d.high_dispersion).map((d) => d.sku_id));
   const opportunities = deriveOpportunities(
     everything,
-    { competitorMoves, dispersionFlags, fieldActions: data.field_actions, current: scoped },
+    {
+      competitorMoves,
+      dispersionFlags,
+      fieldActions: data.field_actions,
+      current: scoped,
+      states: data.opportunity_states ?? {},
+    },
     config,
     now,
   );
@@ -1072,6 +1350,14 @@ export function buildAnalytics(data, filters, config, now = new Date().toISOStri
     fieldEffectiveness: calculateFieldEffectiveness(everything, data, opportunities, config, now),
     territories: buildTerritorySummary(scoped, data, opportunities, config, now),
     topActions: buildTopActions(opportunities, competitorMoves, dispersion),
+    /** Grouped by issue, SKU and scope, for the GM Overview. Outlets are the drill-down. */
+    signals: buildSignals(opportunities, {
+      now,
+      users: data.users,
+      // Selecting a territory already scopes the group; grouping by territory nationally just
+      // repeats one story three times and crowds out the others.
+      scopeBy: filters.territory_id ? 'territory' : 'selection',
+    }),
     categories: OPPORTUNITY_CATEGORIES,
   };
 }

@@ -21,6 +21,7 @@ import { FIELD_ACTION_TYPES, FIELD_RECOMMENDATIONS, PRICE_POSITION_STATUS } from
 import { COMPETITIVE_BUCKET, RANGE_BUCKET } from '../services/pricePositionService.js';
 import {
   CONFIDENCE_NOTE,
+  CONFIDENCE_NOT_ACCURACY_NOTE,
   confidenceBar,
   confidenceMeter,
   esc,
@@ -349,7 +350,7 @@ function renderResultsStep(ctx) {
         <h2>Detected JTI SKUs</h2>
         <span class="card__sub">${jti.length} detection${jti.length === 1 ? '' : 's'} · tap a card to correct</span>
       </div>
-      <p class="xsmall muted" style="margin:0 0 8px">${esc(CONFIDENCE_NOTE)}
+      <p class="xsmall muted" style="margin:0 0 8px">${esc(CONFIDENCE_NOTE)} ${esc(CONFIDENCE_NOT_ACCURACY_NOTE)}
         Below ${Math.round(ctx.config.confidence_review_threshold * 100)}% a detection is marked
         <strong>Review Required</strong> and never drives a price-position judgement until it is confirmed.</p>
       ${jti.map((d) => detectionCard(d, ctx)).join('') || '<div class="empty">No JTI SKUs detected.</div>'}

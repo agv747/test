@@ -19,6 +19,7 @@ import * as priceCheck from './ui/priceCheck.js';
 import * as myVisits from './ui/myVisits.js';
 import * as outletsPage from './ui/outlets.js';
 import * as outletDetail from './ui/outletDetail.js';
+import * as gmOverview from './ui/gmOverview.js';
 import * as controlTower from './ui/controlTower.js';
 import * as opportunities from './ui/opportunities.js';
 import * as skuIntelligence from './ui/skuIntelligence.js';
@@ -43,6 +44,7 @@ const ROUTES = {
   'field/visits': myVisits,
   'field/outlets': outletsPage,
   'outlet': outletDetail,
+  'manager/overview': gmOverview,
   'manager/tower': controlTower,
   'manager/opportunities': opportunities,
   'manager/sku': skuIntelligence,
@@ -66,6 +68,7 @@ const FIELD_NAV = [
 
 const MANAGER_NAV = [
   { section: 'Intelligence' },
+  { route: 'manager/overview', label: 'GM Overview', icon: '★' },
   { route: 'manager/tower', label: 'Price Control Tower', icon: '◎' },
   { route: 'manager/opportunities', label: 'Pricing Opportunities', icon: '◈' },
   { route: 'manager/sku', label: 'SKU Intelligence', icon: '▤' },
@@ -91,8 +94,16 @@ export function parseHash() {
   return { path: path || defaultRoute(), params };
 }
 
+/**
+ * Where a manager lands.
+ *
+ * The GM Overview, not the Control Tower. The Tower opens with a nine-field filter form, eight
+ * KPI cards and a paragraph of disclaimer before the first conclusion, which is the right
+ * arrangement for someone who lives in the screen and the wrong one for someone arriving at it.
+ * The Tower is one click away and keeps everything.
+ */
 function defaultRoute() {
-  return store.currentUser()?.role === 'field' ? 'field/home' : 'manager/tower';
+  return store.currentUser()?.role === 'field' ? 'field/home' : 'manager/overview';
 }
 
 export function navigate(path, params = {}) {
@@ -345,7 +356,7 @@ function delegate(root) {
     if (target.dataset.action === 'switch-user') {
       const user = store.getData().users.find((u) => u.id === target.value);
       store.setSession({ user_id: user.id, role: user.role });
-      navigate(user.role === 'field' ? 'field/home' : 'manager/tower');
+      navigate(user.role === 'field' ? 'field/home' : 'manager/overview');
       render();
       return;
     }

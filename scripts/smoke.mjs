@@ -477,7 +477,7 @@ try {
   await page.click('[data-action="toggle-more-nav"]');
   await wait(350);
   const sheetLinks = await page.locator('.more-nav__link').evaluateAll((e) => e.map((x) => x.dataset.nav));
-  check(sheetLinks.length === 12, `every manager destination is listed (${sheetLinks.length})`);
+  check(sheetLinks.length === 13, `every manager destination is listed (${sheetLinks.length})`);
   for (const route of ['manager/field-effectiveness', 'manager/territories', 'admin/price-rules', 'admin/image-review', 'admin/master-data']) {
     check(sheetLinks.includes(route), `${route} is reachable on a phone`);
   }
@@ -549,6 +549,75 @@ try {
   const skuText = await page.locator('.content').innerText();
   check(/P10/.test(skuText) && /P90/.test(skuText) && /Median/.test(skuText), 'percentiles are reported, not just an average');
   await shot('11-sku-intelligence');
+
+  /* ------------------------------------------------ GM Overview (§E) */
+  //
+  // The acceptance test in the brief is physical: at 1366×768 the message, the metrics and the
+  // priorities must be visible without scrolling through a large filter form.
+  console.log('\nGM Overview (1366×768)');
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(`${BASE}/#/manager/overview`, { waitUntil: 'load' });
+  await wait(800);
+
+  check(/GM Overview/.test(await page.locator('.topbar__title h1').textContent()), 'GM Overview has its own route');
+  const scopeText = await page.locator('[data-gm-scope]').innerText();
+  check(/Singapore/.test(scopeText), 'the scope line names the market');
+  check(/pack of 20/.test(scopeText), 'and the price unit');
+  check(/As of /.test(scopeText), 'and the as-of time');
+  check(/Demo data/i.test(scopeText), 'and marks the data as synthetic');
+
+  const metrics = await page.locator('[data-gm-metrics] .kpi').count();
+  check(metrics <= 4, `at most four primary metrics (${metrics})`);
+  const metricText = await page.locator('[data-gm-metrics]').innerText();
+  check(/\d+ of \d+|of \d+ outlets? in scope/.test(metricText), 'every metric carries an interpretable denominator');
+
+  const signalCount = await page.locator('[data-gm-signals] .signal').count();
+  check(signalCount <= 3, `at most three signals (${signalCount})`);
+  const signalText = await page.locator('[data-gm-signals]').innerText();
+  check(/Owner:/.test(signalText), 'each signal names an owner');
+  check(/Next step:/.test(signalText), 'and a next step');
+  check(/Evidence \d+ day|Observed today/.test(signalText), 'and how old the evidence is');
+  check(/\d+ outlets?/.test(signalText), 'and how many outlets it covers');
+
+  // The headline is the group; the outlets live inside it. A single outlet card must never be
+  // captioned with the group's count.
+  check((await page.locator('.signal__outlets').count()) === 0, 'outlets are not listed until asked for');
+  await page.locator('.signal__head').first().click();
+  await wait(400);
+  check((await page.locator('.signal__outlets').count()) === 1, 'a signal opens its outlet list');
+  const listedOutlets = await page.locator('.signal__outlets tbody tr').count();
+  const claimed = Number(
+    (await page.locator('.signal').first().innerText()).match(/(\d+) outlets?/)[1],
+  );
+  check(
+    listedOutlets === claimed,
+    `the outlet count is the outlets listed (${listedOutlets} listed, ${claimed} claimed)`,
+  );
+
+  // Nothing that matters may sit below the fold on a laptop screen. Measured with the drill-down
+  // closed, which is how the page opens: an expanded outlet table is the reader's own choice.
+  await page.locator('.signal__head').first().click();
+  await wait(400);
+  check((await page.locator('.signal__outlets').count()) === 0, 'the outlet list closes again');
+
+  const fold = await page.evaluate(() => {
+    const box = (sel) => document.querySelector(sel)?.getBoundingClientRect() ?? null;
+    return {
+      viewport: window.innerHeight,
+      metricsBottom: box('[data-gm-metrics]')?.bottom ?? null,
+      firstSignalBottom: document.querySelector('.signal')?.getBoundingClientRect().bottom ?? null,
+      filterForms: document.querySelectorAll('.filters').length,
+    };
+  });
+  check(fold.metricsBottom !== null && fold.metricsBottom <= fold.viewport,
+    `the metrics are above the fold (${Math.round(fold.metricsBottom)} of ${fold.viewport}px)`);
+  check(fold.firstSignalBottom !== null && fold.firstSignalBottom <= fold.viewport,
+    `the top priority is above the fold (${Math.round(fold.firstSignalBottom)} of ${fold.viewport}px)`);
+  check(fold.filterForms === 0, 'no large filter form stands between the reader and the message');
+  await shot('16-gm-overview');
+
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await wait(200);
 
   /* ------------------------- which picture, and whose denominator */
 
