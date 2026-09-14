@@ -15,13 +15,17 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 220 unit/integration tests (node:test, no browser needed)
+npm test        # 345 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
 ```
 
 No build step. The app is plain ES modules served as static assets by a Cloudflare Worker.
+
+**Preparing the GM demo?** [`docs/GM-DEMO.md`](docs/GM-DEMO.md) is the response to the
+14 September review: what changed and why, what the application still cannot tell you, how each
+change was verified, and the 6–7 minute sequence to run on the day.
 
 **The application declares no dependencies at all**, so `npm install` fetches nothing and the
 lockfile holds only the root package. That is deliberate: a declared dependency means the
