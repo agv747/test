@@ -287,7 +287,15 @@ function recognitionTab(ctx) {
     const simulated = p.reads_image === false;
     const paid = p.tier === 'paid';
     const byoKey = p.tier === 'byo-key';
-    const keyMissing = byoKey && workerCfg && !workerCfg.openai_key_configured;
+    /**
+     * Whether the secret THIS model needs is present.
+     *
+     * It used to check `openai_key_configured` for every bring-your-own-key model, so adding
+     * Gemini would have reported "API key not configured" against it whenever the OpenAI key
+     * was missing — and a green tick whenever it was present, regardless of the Google key.
+     */
+    const secret = p.requires_secret ?? null;
+    const keyMissing = byoKey && workerCfg && secret ? !workerCfg.secrets?.[secret] : false;
     return `<div class="detection detection--${selected ? 'good' : paid ? 'watch' : 'none'}" style="cursor:pointer"
         data-action="pick-model" data-model="${esc(p.id)}">
       <div class="detection__head">
@@ -299,8 +307,8 @@ function recognitionTab(ctx) {
               ? '<span class="pill pill--watch">! Does not read the image</span>'
               : byoKey
                 ? (keyMissing
-                    ? '<span class="pill pill--risk">▲ API key not configured</span>'
-                    : '<span class="pill pill--good">✓ Your OpenAI key</span>')
+                    ? `<span class="pill pill--risk">▲ ${esc(secret ?? 'API key')} not configured</span>`
+                    : `<span class="pill pill--good">✓ Your own ${esc(providerName(p))} key</span>`)
                 : paid
                   ? '<span class="pill pill--risk">$ Needs paid plan or credits</span>'
                   : '<span class="pill pill--good">✓ Free allocation</span>'}
@@ -383,8 +391,10 @@ detection = {
              <div class="detection__row"><dt>AI Gateway id</dt><dd class="mono">${esc(workerCfg.ai_gateway_id)}</dd></div>
              ${bindingRow('Re-seed token configured', workerCfg.seed_token_configured)}
              ${bindingRow('OpenAI API key (OPENAI_API_KEY)', workerCfg.openai_key_configured)}
+             ${bindingRow('Google API key (GEMINI_API_KEY)', workerCfg.gemini_key_configured)}
            </dl>
-           ${workerCfg.openai_key_configured ? '' : openAiSetup()}
+           ${workerCfg.openai_key_configured ? '' : keySetup(OPENAI_SETUP)}
+           ${workerCfg.gemini_key_configured ? '' : keySetup(GEMINI_SETUP)}
            <p class="xsmall muted mt">Without the AI binding only the simulator works. Without the database binding the app falls back to bundled data in each browser.</p>`
         : '<p class="small muted">No API reachable from this build — recognition models and the database are unavailable, and the simulator is used.</p>'
     }
@@ -404,6 +414,30 @@ detection = {
   </div>`;
 }
 
+/** Which vendor a model's key belongs to, for the label on its card. */
+function providerName(p) {
+  return p.kind === 'gemini' ? 'Google' : p.kind === 'openai' ? 'OpenAI' : 'provider';
+}
+
+const OPENAI_SETUP = {
+  vendor: 'OpenAI',
+  secret: 'OPENAI_API_KEY',
+  console: 'platform.openai.com/api-keys',
+  consoleUrl: 'https://platform.openai.com/api-keys',
+  limitNote: 'Use a key with a spending limit set on the OpenAI side.',
+};
+
+const GEMINI_SETUP = {
+  vendor: 'Google',
+  secret: 'GEMINI_API_KEY',
+  console: 'aistudio.google.com/apikey',
+  consoleUrl: 'https://aistudio.google.com/apikey',
+  limitNote:
+    'Create the key in Google AI Studio rather than as a Cloud service-account credential — ' +
+    'AI Studio enables the Generative Language API on the project for you. Set a budget on the ' +
+    'Google Cloud project behind it.',
+};
+
 /**
  * The key is set as a Worker secret, not entered here.
  *
@@ -411,18 +445,18 @@ detection = {
  * the database, or accepted through a form and echoed back, would be a key anyone with the
  * URL could take or spend. As a Worker secret it is readable only by the Worker itself.
  */
-function openAiSetup() {
+function keySetup({ vendor, secret, console: consoleName, consoleUrl, limitNote }) {
   return `<div class="card" style="border-color:var(--info-border);background:var(--info-bg);box-shadow:none;margin-top:12px">
-    <h3>Using your own OpenAI key</h3>
+    <h3>Using your own ${esc(vendor)} key</h3>
     <p class="small">The key is stored as a <strong>Worker secret</strong> — never in this application's database, and never returned to a browser. Set it once:</p>
     <ol class="small">
-      <li>Create a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com/api-keys</a>.</li>
+      <li>Create a key at <a href="${esc(consoleUrl)}" target="_blank" rel="noopener noreferrer">${esc(consoleName)}</a>.</li>
       <li>Cloudflare dashboard → <strong>Workers &amp; Pages</strong> → this Worker → <strong>Settings</strong> → <strong>Variables and Secrets</strong>.</li>
-      <li><strong>Add</strong> → type <strong>Secret</strong> → name <span class="mono">OPENAI_API_KEY</span> → paste the key → <strong>Deploy</strong>.</li>
+      <li><strong>Add</strong> → type <strong>Secret</strong> → name <span class="mono">${esc(secret)}</span> → paste the key → <strong>Deploy</strong>.</li>
       <li>Come back here, press <strong>Refresh</strong>, then <strong>Test on a sample image</strong>.</li>
     </ol>
-    <p class="xsmall muted">From a terminal instead: <span class="mono">npx wrangler secret put OPENAI_API_KEY</span></p>
-    <p class="xsmall muted">Anyone who can open this application can spend against that key, because there is no sign-in. Use a key with a spending limit set on the OpenAI side.</p>
+    <p class="xsmall muted">From a terminal instead: <span class="mono">npx wrangler secret put ${esc(secret)}</span></p>
+    <p class="xsmall muted">Anyone who can open this application can spend against that key, because there is no sign-in. ${esc(limitNote)}</p>
   </div>`;
 }
 

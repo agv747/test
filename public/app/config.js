@@ -212,6 +212,32 @@ export const RECOGNITION_MODELS = [
     cost: 'Billed to your OpenAI account',
   },
   {
+    id: 'gemini:gemini-3.8-flash',
+    label: 'Google Gemini 3.8 Flash',
+    kind: 'gemini',
+    tier: 'byo-key',
+    input: 'messages',
+    api_model: 'gemini-3.8-flash',
+    requires_secret: 'GEMINI_API_KEY',
+    reads_image: true,
+    description:
+      'Called directly against your own Google AI Studio account. The current Gemini Flash generation, and the strongest option here for a crowded shelf photograph: it reads dense small print well and supports a JSON response type, so the answer parses without prose-stripping.',
+    cost: 'Billed to your Google AI Studio account (introductory $0.75 / M input tokens to 31 Dec 2026)',
+  },
+  {
+    id: 'gemini:gemini-3.7-flash',
+    label: 'Google Gemini 3.7 Flash',
+    kind: 'gemini',
+    tier: 'byo-key',
+    input: 'messages',
+    api_model: 'gemini-3.7-flash',
+    requires_secret: 'GEMINI_API_KEY',
+    reads_image: true,
+    description:
+      'The previous Flash generation, on the same key. Kept as a fallback: model availability changes, and a demo should not depend on one identifier still resolving on the day.',
+    cost: 'Billed to your Google AI Studio account',
+  },
+  {
     id: 'openai/gpt-4.1-mini',
     label: 'GPT-4.1 mini (via AI Gateway)',
     kind: 'gateway',

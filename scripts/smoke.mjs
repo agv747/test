@@ -489,6 +489,63 @@ try {
   check(/Image Review/.test(await page.locator('.topbar__title h1').textContent()), 'a sheet link navigates');
   check((await page.locator('.more-nav').count()) === 0, 'the sheet closes once a destination is chosen');
 
+  /* ------------------------------------------ a second vendor: Gemini */
+  //
+  // Gemini is a separate account, a separate key and a separate set of failure shapes. What
+  // matters at this level is that choosing it changes what the field screen SAYS is reading
+  // the photo — an audience cannot tell a simulated shelf from a real one by the numbers.
+  console.log('\nGemini as the active model (414×896)');
+
+  await page.goto(`${BASE}#/admin/master-data`, { waitUntil: 'load' });
+  await wait(500);
+  await page.click('[data-action="tab"][data-tab="recognition"]');
+  await wait(400);
+
+  const geminiCard = page.locator('[data-action="pick-model"][data-model="gemini:gemini-3.8-flash"]');
+  check((await geminiCard.count()) === 1, 'Gemini is offered in Admin');
+  const geminiText = await geminiCard.innerText();
+  check(/GEMINI_API_KEY/.test(geminiText), 'and names the Worker secret it needs');
+  // Without a key configured the card must say so — against ITS key, not another vendor's.
+  check(
+    /GEMINI_API_KEY not configured|Your own Google key/.test(geminiText),
+    'and reports on its own key rather than OpenAI\u2019s',
+  );
+
+  await geminiCard.click();
+  await wait(400);
+
+  await page.goto(`${BASE}#/field/check`, { waitUntil: 'load' });
+  await page.reload({ waitUntil: 'load' });
+  await wait(700);
+  await page.fill('#outlet-search', 'SG-E-1042');
+  await wait();
+  await page.locator('.outlet-card').first().click();
+  await wait();
+  await page.setInputFiles('#gallery-input', ['public/demo-images/shelf-punggol-central.jpg']);
+  await wait(700);
+
+  const geminiMode = await page.locator('[data-recognition-mode]').innerText();
+  check(/Real recognition — Google Gemini/.test(geminiMode), 'the field screen names Gemini before processing');
+  // The card does contain the word "simulated" — in the promise NOT to fall back to it — so
+  // the mode is read from the attribute rather than from the prose.
+  check(
+    (await page.getAttribute('[data-recognition-mode]', 'data-recognition-mode')) === 'real',
+    'and flags the mode as real rather than demo content',
+  );
+  check(
+    /rather than falling back/.test(geminiMode),
+    'and says a failure stops the visit rather than substituting invented prices',
+  );
+
+  await page.click('[data-action="process"]');
+  await wait(2200);
+  check((await page.locator('.detection').count()) === 5, 'the Gemini answer reaches the same detection shape');
+  check(
+    !(await page.locator('.field-app').innerText()).includes('Demo recognition'),
+    'and the results are not labelled as demo content',
+  );
+  await shot('17-gemini-active');
+
   /* --------------------------------------------- manager routes (desktop) */
   console.log('\nManager and admin routes (1440×950)');
   await page.setViewportSize({ width: 1440, height: 950 });

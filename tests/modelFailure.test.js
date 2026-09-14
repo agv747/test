@@ -78,14 +78,24 @@ test('at least one image-reading model runs inside the free allocation', () => {
 /* --------------------------------------------------- bring-your-own-key models */
 
 test('a bring-your-own-key model names the secret it needs and the API model to call', () => {
+  // Each vendor has its own secret. Assuming one for all of them is how Admin came to report
+  // "API key not configured" against a Google model whenever the OpenAI key was absent.
+  const SECRET_BY_KIND = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' };
+
   const byoKey = RECOGNITION_MODELS.filter((m) => m.tier === 'byo-key');
   assert.ok(byoKey.length >= 1, 'at least one model runs on the account holder\'s own key');
   for (const model of byoKey) {
-    assert.equal(model.requires_secret, 'OPENAI_API_KEY');
+    assert.ok(SECRET_BY_KIND[model.kind], `${model.id} has an unrecognised kind: ${model.kind}`);
+    assert.equal(model.requires_secret, SECRET_BY_KIND[model.kind]);
     assert.ok(model.api_model, `${model.id} names the provider-side model id`);
-    assert.equal(model.kind, 'openai');
     assert.equal(model.reads_image, true);
   }
+});
+
+test('both vendors are offered, so one account being unavailable is not the end of it', () => {
+  const kinds = new Set(RECOGNITION_MODELS.filter((m) => m.tier === 'byo-key').map((m) => m.kind));
+  assert.ok(kinds.has('openai'));
+  assert.ok(kinds.has('gemini'));
 });
 
 test('a missing key is explained with where to put it, not as a generic failure', () => {

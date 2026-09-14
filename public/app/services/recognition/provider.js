@@ -46,6 +46,9 @@ export function listProviders() {
     description: p.description ?? '',
     cost: p.cost ?? '',
     licence: p.licence ?? null,
+    /** Which Worker secret this model needs, so Admin can check for that one rather than
+     *  assuming every bring-your-own-key model is an OpenAI one. */
+    requires_secret: p.requires_secret ?? null,
   }));
 }
 

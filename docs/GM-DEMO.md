@@ -41,7 +41,13 @@ differs is what the simulator does with the file:
 |---|---|---|
 | Built-in sample, simulator active | `mock-simulator` | Nothing. Returns the agreed fixture for that file name. |
 | Own photo, simulator active | `mock-simulator` | Nothing. Generates detections from the catalogue, seeded by the image identity. |
-| Either, a vision model active | `openai:gpt-4o` or another configured model | The image, through the Worker's binding. Fails loudly on error. |
+| Either, a vision model active | `gemini:gemini-3.8-flash`, `openai:gpt-4o` or another configured model | The image, through the Worker. Fails loudly on error. |
+
+Two vendors are wired up for real recognition, each on its own key: Google Gemini
+(`GEMINI_API_KEY`) and OpenAI (`OPENAI_API_KEY`), plus the Cloudflare-hosted models on the
+`AI` binding. Gemini 3.8 Flash is the strongest of them on a crowded shelf photograph. Having
+two matters for the demo: one account being rate-limited or unfunded on the day is then a
+switch in Admin, not a dead slide.
 
 The mode is now stated **before** Process is pressed, on the acquisition step, and repeated on
 the processing and results screens. A real provider that fails throws; it never falls back to
@@ -173,10 +179,12 @@ problem, not of the build.
   routinely is. Establishing accuracy needs a labelled set of 100–200 local images scored against
   what the pack actually was, with confidently-wrong readings counted separately.
 - **No live model call was possible from the build environment.** Outbound HTTPS to
-  `api.openai.com` is refused by the egress proxy (`CONNECT tunnel failed, response 403`), as is
-  the deployed Worker host. The vision path was verified by stubbing the Worker's `fetch` in unit
-  tests and `/api/recognise` in the browser suite. **Run one real photo through the deployed app
-  before the meeting.**
+  `api.openai.com` and `generativelanguage.googleapis.com` is refused by the egress proxy
+  (`CONNECT tunnel failed, response 403`), as is the deployed Worker host. Both vision paths were
+  verified by stubbing the Worker's `fetch` in unit tests and `/api/recognise` in the browser
+  suite — the request shape, the response shape and every failure branch are covered, but nothing
+  here proves the model ids still resolve on Google's side. **Run one real photo through the
+  deployed app before the meeting, on whichever model you intend to show.**
 - **Causation is not established and cannot be.** Field Effectiveness reports observed sequences.
   No revenue uplift, recovered margin or ROI can be derived from these observations alone.
 - **Expected assortment is a working definition** — outlet–SKU combinations observed at least
@@ -197,7 +205,7 @@ problem, not of the build.
 ## 3. Validation
 
 ```bash
-npm test        # 349 unit tests
+npm test        # 370 unit tests
 npm run smoke   # 160 browser checks against a real page, Playwright/Chromium
 SHOTS=1 npm run smoke   # the same, writing screenshots to .smoke-screenshots/
 npx esbuild worker.js --bundle --format=esm --outfile=/dev/null   # Worker bundle

@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 349 unit/integration tests (node:test, no browser needed)
+npm test        # 370 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -290,23 +290,35 @@ survives a reload.
 | `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free allocation, one-time licence acceptance |
 | `openai:gpt-4.1-mini` | Yes | **your own OpenAI key** |
 | `openai:gpt-4o` | Yes | **your own OpenAI key** |
+| `gemini:gemini-3.8-flash` | Yes | **your own Google AI Studio key** |
+| `gemini:gemini-3.7-flash` | Yes | **your own Google AI Studio key** |
 | `@cf/qwen/qwen3.8-27b` | Yes | **paid** — Workers Paid plan or AI Gateway credits |
 | `openai/gpt-4.1-mini` | Yes | **paid** — AI Gateway credits |
 
-**Using your own OpenAI key.** The key is stored as a **Worker secret**, never in the
+**Using your own key.** Each vendor has its own secret, stored on the Worker, never in the
 database and never returned to a browser:
 
 ```bash
-npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OPENAI_API_KEY   # for the openai: models
+npx wrangler secret put GEMINI_API_KEY   # for the gemini: models
 ```
 
 …or Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add → type
-**Secret** → name `OPENAI_API_KEY`. Admin shows only whether it is configured.
+**Secret**. Admin shows only whether each one is configured, and each model card checks for
+the secret **it** needs rather than assuming one vendor.
 
 This application has **no authentication**: anyone with the URL can use it, and therefore
-anyone with the URL can spend against that key. Set a spending limit on the OpenAI side. A
-key accepted through a form and stored in the database would be worse — it could be taken,
-not merely spent.
+anyone with the URL can spend against those keys. Set a spending limit on the OpenAI side and
+a budget on the Google Cloud project behind the Gemini key. A key accepted through a form and
+stored in the database would be worse — it could be taken, not merely spent.
+
+**Gemini specifics.** Create the key in [Google AI Studio](https://aistudio.google.com/apikey),
+which enables the Generative Language API on the project for you; a Cloud service-account
+credential is not the same thing and is rejected. Two of Gemini's failures arrive as HTTP 200
+with no usable text — a safety filter stopping the request, and an answer that ran out of
+output tokens before any of it arrived. Both would otherwise reach the parser as "the model
+read no prices from this image", sending a TME to retake a photograph that was never the
+problem, so each is detected and named instead.
 
 **Licence-gated models.** The Llama models require a one-time acceptance of Meta's Community
 License, sent as the literal prompt `agree`. That acceptance also represents that you are
@@ -318,8 +330,8 @@ restriction, which is why it is the recommended default.
 model against a demo price list through the real `/api/recognise` path and writes the whole
 exchange to a call log — HTTP status, elapsed time, every detection with its matched SKU and
 confidence, and the raw model response. **Deployment configuration** on the same screen
-reports what is actually bound: `env.AI`, `env.DB`, the AI Gateway id, and whether the
-OpenAI key is set.
+reports what is actually bound: `env.AI`, `env.DB`, the AI Gateway id, and whether each
+provider key is set.
 
 Workers AI includes **10,000 Neurons per day at no charge** on both the Free and Paid plans.
 Models marked *free allocation* run inside it; the frontier and third-party models fail with
