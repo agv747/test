@@ -256,6 +256,21 @@ function sourceIndicator() {
     : '<span class="pill pill--watch" title="No database reachable — this browser only, changes are not shared">! Local demo data</span>';
 }
 
+/**
+ * Marks the dataset as synthetic, and puts the presentation controls where they belong.
+ *
+ * "Reset demo" used to sit in the top bar of every business screen, one click from the numbers
+ * a manager is reading — a destructive control at the same size and prominence as the work. It
+ * lives in Admin now, beside its warning, and this badge says what the data is and points at it.
+ * The persona switcher stays: the demo script moves between a TME and a manager, and hiding
+ * that would make the story harder to follow rather than safer.
+ */
+function demoBadge() {
+  return `<button class="pill pill--info" data-nav="admin/master-data"
+    title="Synthetic demonstration dataset. Reset and other presentation controls are in Admin."
+    style="cursor:pointer;border-style:solid">Demo data</button>`;
+}
+
 function roleSwitcher(ctx) {
   return `<select data-action="switch-user" aria-label="Switch user" style="width:auto">
     ${ctx.data.users
@@ -305,8 +320,8 @@ export function render() {
             <small>${page.subtitle ? esc(page.subtitle(ctx)) : ''}</small>
           </div>
           ${sourceIndicator()}
+          ${demoBadge()}
           ${roleSwitcher(ctx)}
-          <button class="btn btn--sm" data-action="reset-demo" title="Restore the demo dataset">Reset demo</button>
         </header>
         <main class="content${page.narrow ? ' content--narrow' : ''}">${body}</main>
         <nav class="mobile-nav">${mobileNavHtml(ctx)}</nav>
@@ -339,10 +354,12 @@ function delegate(root) {
 
     if (action.dataset.action === 'reset-demo') {
       const { source } = store.dataSource();
+      // Neither branch touches another person's work: against a database this re-reads it,
+      // and locally it rewrites this browser's own copy only.
       const message =
         source === 'database'
-          ? 'Discard local settings and reload the shared dataset from the database?'
-          : 'Reset all demo data back to the seeded dataset?';
+          ? 'Discard this browser\u2019s local settings and reload the shared dataset from the database? Nothing stored in the database is changed.'
+          : 'Reset this browser\u2019s demo data back to the seeded dataset? No other user is affected.';
       if (confirm(message)) {
         store.reload().then(render);
       }

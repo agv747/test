@@ -165,10 +165,12 @@ export function canTransition(from, to) {
 export function opportunityReason(opportunity) {
   const parts = [];
   if (opportunity.is_strategic) parts.push('Strategic SKU');
+  // Not "competitor cheaper": the bucket is measured against the corridor configured for the
+  // mapping, and a JTI price below its competitor can still be above where it is meant to sit.
   if (opportunity.competitive_bucket === COMPETITIVE_BUCKET.JTI_EXPENSIVE) {
-    parts.push('competitor cheaper');
+    parts.push('above intended relative position');
   } else if (opportunity.competitive_bucket === COMPETITIVE_BUCKET.JTI_CHEAPER) {
-    parts.push('competitor more expensive');
+    parts.push('below intended relative position');
   }
   if (opportunity.range_bucket === RANGE_BUCKET.ABOVE) parts.push('above recommended range');
   if (opportunity.range_bucket === RANGE_BUCKET.BELOW) parts.push('below recommended range');

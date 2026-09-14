@@ -35,48 +35,89 @@ function indexBy(list, key = 'id') {
 }
 
 /**
- * Finds the competitor observation to compare a JTI observation against.
- * Preference order: same visit → same outlet, most recent within lookback → territory
- * median within lookback (flagged as a fallback so the UI can warn about freshness §26).
+ * The competitor price a JTI observation is compared against (GM review §B.6).
+ *
+ * A price comparison is a claim about one shelf at one moment, and the bases available differ
+ * enormously in how well they support that claim:
+ *
+ *   same visit          both prices read off the same shelf on the same day. This is the claim.
+ *   same outlet, recent the same shop within the skew tolerance. Nearly the claim; the skew is
+ *                       reported so a fortnight-old competitor price is visible as one.
+ *   territory median    other shops. Not the claim at all.
+ *
+ * The third used to be substituted silently and fed straight into the competitive verdict, so
+ * an outlet nobody had read a competitor price in still produced a Price Index, a position and
+ * an alignment percentage — all of them describing shops elsewhere. It is now returned clearly
+ * marked as context and, by default, kept out of the verdict: "no comparable pair" is the true
+ * answer, and unlike a plausible number it sends somebody to go and read one.
+ *
+ * Future-dated readings are rejected outright. A competitor price observed after the JTI price
+ * cannot have been on the shelf beside it.
  */
 export function resolveCompetitorObservation(jtiObs, competitorSkuId, observations, config) {
   if (!competitorSkuId) return null;
-  const lookback = config.competitor_move.lookback_days;
+  const maxSkew = config.pairing?.max_skew_days ?? config.freshness.aging_max_days;
   const observedAt = toDate(jtiObs.observed_at);
 
   const relevant = observations.filter(
     (o) =>
       o.sku_id === competitorSkuId &&
       !o.excluded &&
-      toDate(o.observed_at) <= observedAt &&
-      (daysBetween(o.observed_at, observedAt) ?? Infinity) <= lookback,
+      // Never from the future: nothing read later was on the shelf at the time.
+      toDate(o.observed_at) <= observedAt,
   );
   if (!relevant.length) return null;
 
+  const skew = (o) => daysBetween(o.observed_at, observedAt) ?? Infinity;
+
   const sameVisit = relevant.find((o) => o.visit_id === jtiObs.visit_id);
   if (sameVisit) {
-    return { price: sameVisit.confirmed_price, observed_at: sameVisit.observed_at, basis: 'same_visit', observation: sameVisit };
+    return {
+      price: sameVisit.confirmed_price,
+      observed_at: sameVisit.observed_at,
+      basis: 'same_visit',
+      basis_label: 'read in the same visit',
+      outlet_level: true,
+      skew_days: 0,
+      within_tolerance: true,
+      observation: sameVisit,
+    };
   }
 
   const sameOutlet = relevant
     .filter((o) => o.outlet_id === jtiObs.outlet_id)
     .sort((a, b) => toDate(b.observed_at) - toDate(a.observed_at))[0];
   if (sameOutlet) {
+    const days = round(skew(sameOutlet), 1);
     return {
       price: sameOutlet.confirmed_price,
       observed_at: sameOutlet.observed_at,
       basis: 'same_outlet_recent',
+      basis_label: `read in the same outlet ${days} day${days === 1 ? '' : 's'} earlier`,
+      outlet_level: true,
+      skew_days: days,
+      /** Beyond the tolerance the pair is reported as unavailable rather than quietly aged. */
+      within_tolerance: days <= maxSkew,
       observation: sameOutlet,
     };
   }
 
-  const territoryObs = relevant.filter((o) => o.territory_id === jtiObs.territory_id);
+  // Context only. Returned so the screen can say what it does and does not have, never so a
+  // verdict can be built on other shops' prices.
+  const lookback = config.competitor_move.lookback_days;
+  const territoryObs = relevant.filter(
+    (o) => o.territory_id === jtiObs.territory_id && skew(o) <= lookback,
+  );
   if (territoryObs.length) {
     const latest = territoryObs.sort((a, b) => toDate(b.observed_at) - toDate(a.observed_at))[0];
     return {
       price: round(median(territoryObs.map((o) => o.confirmed_price)), 2),
       observed_at: latest.observed_at,
       basis: 'territory_median',
+      basis_label: `median of ${territoryObs.length} observation${territoryObs.length === 1 ? '' : 's'} in other outlets in the territory`,
+      outlet_level: false,
+      skew_days: round(skew(latest), 1),
+      within_tolerance: false,
       observation: null,
     };
   }
@@ -152,19 +193,47 @@ export function enrichObservations(data, config, now = new Date().toISOString())
       view.competitor_price = competitor?.price ?? null;
       view.competitor_observed_at = competitor?.observed_at ?? null;
       view.competitor_basis = competitor?.basis ?? null;
+      view.competitor_basis_label = competitor?.basis_label ?? null;
+      view.competitor_skew_days = competitor?.skew_days ?? null;
       view.competitor_sku = competitorSku;
       view.competitor_sku_name = competitorSku?.name ?? null;
       view.competitor_freshness = competitor
         ? freshnessLabel(competitor.observed_at, now, config.freshness)
         : null;
       /** §26 — do not present a confident competitive conclusion on stale comparison data. */
-      view.competitor_stale =
-        competitor && (daysBetween(competitor.observed_at, o.observed_at) ?? 0) >
-          config.freshness.aging_max_days;
+      view.competitor_stale = Boolean(competitor && !competitor.within_tolerance);
+
+      /**
+       * Whether this is a comparable pair, or a number that merely looks like one.
+       *
+       * Two readings of the same shelf close enough in time. A territory median is other
+       * shops' prices and cannot establish this shop's position — by default it is context
+       * beside the observation, never the basis of its verdict. An out-of-tolerance skew is
+       * the same judgement about time rather than place.
+       *
+       * When there is no pair the comparison is reported as unavailable. It is not resolved
+       * as aligned, as a zero gap, or as an index of 100: missing evidence must never arrive
+       * on a screen wearing the clothes of a good result.
+       */
+      const territoryMedianCounts = config.pairing?.territory_median_counts_as_pair ?? false;
+      view.comparable_pair = Boolean(
+        competitor &&
+          competitor.within_tolerance &&
+          (competitor.outlet_level || territoryMedianCounts),
+      );
+      view.pair_unavailable_reason = competitor
+        ? view.comparable_pair
+          ? null
+          : competitor.outlet_level
+            ? `the competitor price is ${competitor.skew_days} days from this reading, beyond the ${config.pairing?.max_skew_days ?? config.freshness.aging_max_days}-day tolerance`
+            : 'the only competitor price available is a median of other outlets, which cannot establish this outlet’s position'
+        : o.competitor_sku_id_snapshot
+          ? 'no competitor price has been observed for the mapped SKU'
+          : null;
 
       view.evaluation = evaluateObservation({
         confirmedPrice: o.confirmed_price,
-        competitorPrice: view.competitor_price,
+        competitorPrice: view.comparable_pair ? view.competitor_price : null,
         ruleSnapshot: o,
         mappingSnapshot: o,
         confidence: o.recognition_confidence,
@@ -1263,8 +1332,15 @@ export function buildTopActions(opportunities, competitorMoves, dispersion, limi
       priority: move.priority,
       score: move.magnitude * 8,
       title: `${move.competitor_sku_name} ${move.change < 0 ? 'decreased' : 'increased'} by SGD ${Math.abs(move.change).toFixed(2)}`,
-      subtitle: `${move.affected_observations} affected JTI observations across ${move.affected_outlets} outlets`,
-      reason: `Mapped JTI SKU Price Index now ${move.new_price_index ?? '—'}`,
+      subtitle: `${move.affected_observations} affected JTI observations across ${move.affected_outlets} outlets · measured on ${move.paired_outlets} paired outlet${move.paired_outlets === 1 ? '' : 's'}`,
+      // Per mapping, never pooled: three SKUs at three price levels do not share a position,
+      // and the single blended index this replaces was the position of none of them.
+      reason: move.per_sku.length
+        ? `Position now — ${move.per_sku
+            .slice(0, 3)
+            .map((r) => `${r.jti_sku_name} index ${r.price_index ?? '—'} (intended ${r.desired_price_index_min ?? '—'}–${r.desired_price_index_max ?? '—'})`)
+            .join('; ')}`
+        : 'No active JTI mapping for this competitor SKU',
       suggested_action: 'Review competitive position',
       move,
     });

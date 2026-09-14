@@ -28,6 +28,30 @@ export const DEFAULT_CONFIG = {
     aging_max_days: 14,
   },
 
+  /**
+   * How a JTI price is paired with a competitor price.
+   *
+   * A comparison is a claim about one shelf at one moment. Two prices read in the same visit
+   * are that; two prices read in the same shop a fortnight apart are nearly that; a median of
+   * other shops in the territory is not that at all, however plausible the number looks.
+   *
+   * `max_skew_days` is how far apart two readings of the same shelf may be and still be called
+   * a pair. Beyond it the pair is reported as unavailable rather than quietly aged.
+   */
+  pairing: {
+    max_skew_days: 14,
+    /**
+     * Whether a territory median may stand in when the outlet has no competitor reading.
+     *
+     * It is shown as context either way. What this controls is whether it may drive a
+     * competitive verdict — and it may not: a price from other shops cannot establish this
+     * shop's position, and an alignment percentage built on it reports agreement with a number
+     * nobody observed here. "No comparable pair" is the true answer, and a visibly missing
+     * comparison is what sends somebody to go and read one.
+     */
+    territory_median_counts_as_pair: false,
+  },
+
   /** Competitor move detection (§13, §24). */
   competitor_move: {
     lookback_days: 30,

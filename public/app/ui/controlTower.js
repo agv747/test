@@ -176,7 +176,31 @@ function drilldownCard(a, ctx) {
     { key: 'sku_name', label: 'JTI SKU', render: (o) => `${esc(o.sku_name)} ${strategicPill(o.sku)}` },
     { key: 'competitor_sku_name', label: 'Competitor SKU', render: (o) => esc(o.competitor_sku_name ?? '—') },
     { key: 'confirmed_price', label: 'JTI price', align: 'right', render: (o) => money(o.confirmed_price) },
-    { key: 'competitor_price', label: 'Competitor price', align: 'right', render: (o) => money(o.competitor_price) },
+    {
+      // Both timestamps and the basis, so a "pair" that is a fortnight apart — or a median of
+      // other shops — is visible as what it is rather than as a competitor price.
+      key: 'competitor_price',
+      label: 'Competitor price',
+      align: 'right',
+      render: (o) =>
+        o.competitor_price === null || o.competitor_price === undefined
+          ? '<span class="muted">not observed</span>'
+          : `${money(o.competitor_price)}<br /><span class="xsmall ${o.comparable_pair ? 'muted' : 'signal__stale'}">${esc(
+              o.competitor_basis_label ?? '',
+            )}</span>`,
+      sortValue: (o) => o.competitor_price ?? 0,
+    },
+    {
+      key: 'comparable_pair',
+      label: 'Comparable pair',
+      render: (o) =>
+        !o.competitor_sku_id_snapshot
+          ? '<span class="muted">no mapping</span>'
+          : o.comparable_pair
+            ? `<span class="pill pill--good">Yes</span><br /><span class="xsmall muted">${esc(dateTimeLabel(o.competitor_observed_at))}</span>`
+            : `<span class="pill pill--watch">No</span><br /><span class="xsmall muted">${esc(o.pair_unavailable_reason ?? '')}</span>`,
+      sortValue: (o) => (o.comparable_pair ? 1 : 0),
+    },
     { key: 'gap', label: 'Price gap', align: 'right', render: (o) => gapCell(o.evaluation.gap), sortValue: (o) => o.evaluation.gap },
     {
       key: 'index',

@@ -97,9 +97,10 @@ export function calculateCoverage(snapshotObservations, allObservations, data, o
   // one there is nothing to compare against and nothing missing.
   const jti = snapshotObservations.filter((o) => o.is_jti && inScope.has(o.outlet_id));
   const requiringPair = jti.filter((o) => o.competitor_sku_id_snapshot);
-  const withPair = requiringPair.filter(
-    (o) => Number.isFinite(o.competitor_price) && !o.competitor_stale,
-  );
+  // `comparable_pair` is the single definition of a usable pair — two readings of the same
+  // shelf, close enough in time. A median of other outlets in the territory does not count,
+  // which is why this number is lower than it used to be and truer than it was.
+  const withPair = requiringPair.filter((o) => o.comparable_pair);
 
   const matched = jti.filter((o) => o.evaluation?.competitive?.aligned !== null && o.evaluation?.competitive?.aligned !== undefined);
   const aligned = matched.filter((o) => o.evaluation.competitive.aligned === true);

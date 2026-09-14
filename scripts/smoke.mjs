@@ -566,6 +566,11 @@ try {
   check(/As of /.test(scopeText), 'and the as-of time');
   check(/Demo data/i.test(scopeText), 'and marks the data as synthetic');
 
+  // A destructive presentation control must not sit beside the numbers a manager is reading.
+  const topbar = await page.locator('.topbar').innerText();
+  check(!/Reset demo/i.test(topbar), 'the reset control is not in the business view');
+  check(/Demo data/i.test(topbar), 'but the top bar still says the dataset is synthetic');
+
   const metrics = await page.locator('[data-gm-metrics] .kpi').count();
   check(metrics <= 4, `at most four primary metrics (${metrics})`);
   const metricText = await page.locator('[data-gm-metrics]').innerText();
@@ -639,6 +644,20 @@ try {
   // The card labels are upper-cased by the stylesheet, so match without regard to case.
   check(/Outlet visit coverage/i.test(coverageText), 'outlet visit coverage is its own metric');
   check(/Comparable-pair availability/i.test(coverageText), 'so is comparable-pair availability');
+
+  // A pair is two readings of the same shelf, close enough in time. A median of other outlets
+  // in the territory used to be substituted silently and fed straight into the verdict, so an
+  // outlet nobody had read a competitor price in still produced an index and an alignment.
+  await page.locator('.matrix-cell').first().click();
+  await wait(600);
+  const drilldown = await page.locator('.table-wrap').last().innerText();
+  check(/Comparable pair/i.test(drilldown), 'the drill-down says whether a real pair exists');
+  check(
+    /read in the same visit|read in the same outlet|median of/.test(drilldown),
+    'and on what basis the competitor price was paired',
+  );
+  await page.click('[data-action="close-drilldown"]');
+  await wait(400);
 
   // Filtering to one territory must ask about that territory's own completeness.
   const networkDenominator = Number(coverageText.match(/(\d+) of (\d+)/)[2]);
