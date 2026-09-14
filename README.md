@@ -78,6 +78,20 @@ npx wrangler d1 execute retail-price-intelligence --remote --file=dist/seed.sql
 SMOKE_BASE=http://127.0.0.1:8787 npm run smoke             # smoke against a real Worker + D1
 ```
 
+**After deploying a change that adds a column**, call `POST /api/migrate` once:
+
+```bash
+curl -X POST https://<worker-host>/api/migrate
+```
+
+Seeding creates tables with `CREATE TABLE IF NOT EXISTS`, which does nothing at all to a
+table that already exists — including adding a column declared after it was made. Every
+column added to `shared/schema.js` after the first deploy was therefore missing in the
+deployed database while the code read it back as `undefined`: nothing failed, and the feature
+simply never appeared. `/api/migrate` issues the additive `ALTER TABLE … ADD COLUMN`
+statements instead, treating "duplicate column name" as success, so re-running it is a no-op
+and it never touches data.
+
 ### Deploying
 
 The app deploys as a single Cloudflare Worker serving `public/` as static assets. Validate

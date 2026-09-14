@@ -744,6 +744,22 @@ textarea { min-height: 74px; resize: vertical; }
 .decision__value { font-size: 1.12rem; font-weight: 680; margin-top: 2px; }
 .decision__note { font-size: 0.8rem; margin-top: 5px; }
 
+/* What is about to read the images, stated before Process is pressed. It borrows the
+   decision card's tones but keeps its own class names: the decision card is the one thing on
+   the screen the TME acts on, and two elements answering to the same selector made "the
+   recommendation" ambiguous to anything reading the page, tests included. */
+.mode-card {
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  border: 1px dashed;
+  margin-bottom: 14px;
+}
+.mode-card--good { background: var(--good-bg); border-color: var(--good-border); }
+.mode-card--watch { background: var(--watch-bg); border-color: var(--watch-border); }
+.mode-card__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; opacity: 0.8; }
+.mode-card__value { font-size: 1rem; font-weight: 680; margin-top: 2px; }
+.mode-card__note { font-size: 0.8rem; margin-top: 5px; }
+
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .summary-grid > div {
   background: var(--surface-2);

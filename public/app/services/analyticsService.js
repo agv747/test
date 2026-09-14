@@ -23,6 +23,9 @@ import {
   suggestedAction,
 } from './opportunityService.js';
 import { rangeDeviation, priceIndexDeviation } from './pricePositionService.js';
+import { applySnapshot } from './snapshotService.js';
+import { OUTCOME, classifyOutcome, movementSource, summariseOutcomes } from './fieldOutcomeService.js';
+import { calculateCoverage, outletsInScope } from './coverageService.js';
 
 function indexBy(list, key = 'id') {
   const map = new Map();
@@ -279,11 +282,20 @@ function deltaOf(current, previous) {
   return round(current - previous, 1);
 }
 
-/** §9.1 — Market coverage: outlets observed recently vs. active outlets in scope. */
-export function calculateMarketCoverage(observations, outlets, config, now) {
-  const active = outlets.filter((o) => o.active !== false);
+/**
+ * §9.1 — Market coverage.
+ *
+ * Kept for the outlets-visited headline, now scoped: the denominator is the outlets the
+ * current filters select, not every outlet in the country. Filtering to East and visiting
+ * all six of East's outlets reads 6/6, not 6/24. The four separate coverage questions live
+ * in coverageService.
+ */
+export function calculateMarketCoverage(observations, outlets, config, now, filters = {}) {
+  const active = outletsInScope(outlets, filters);
+  const inScope = new Set(active.map((o) => o.id));
   const recent = new Set(
     observations
+      .filter((o) => inScope.has(o.outlet_id))
       .filter((o) => (daysBetween(o.observed_at, now) ?? Infinity) <= config.freshness.aging_max_days)
       .map((o) => o.outlet_id),
   );
@@ -292,6 +304,7 @@ export function calculateMarketCoverage(observations, outlets, config, now) {
     observed_outlets: recent.size,
     coverage_pct: active.length ? round((recent.size / active.length) * 100, 1) : null,
     window_days: config.freshness.aging_max_days,
+    scope: filters.territory_id || filters.channel_id || filters.outlet_id ? 'selected scope' : 'all outlets',
   };
 }
 
@@ -342,10 +355,17 @@ export function buildPriceMatrix(observations) {
  * §10 — derives Pricing Opportunities from evaluated observations.
  * One opportunity per outlet + JTI SKU, based on the most recent observation, enriched with
  * persistence, dispersion and competitor-move context.
+ *
+ * Two different sets of observations are needed and they are not interchangeable. Whether a
+ * case is open now is decided by the current trusted picture: a low-confidence reading
+ * nobody has confirmed must not put an outlet on a priority list. How long it has been open,
+ * and whether it keeps recurring, can only come from the full history.
  */
 export function deriveOpportunities(observations, context, config, now) {
-  const { competitorMoves = [], dispersionFlags = new Set(), fieldActions = [] } = context;
+  const { competitorMoves = [], dispersionFlags = new Set(), fieldActions = [], current = null } = context;
   const movedSkus = new Set(competitorMoves.flatMap((m) => m.affected_jti_sku_ids));
+  // Null means "no snapshot supplied": every observation counts, as before.
+  const eligible = current ? new Set(current.map((o) => o.id)) : null;
 
   const groups = new Map();
   for (const o of observations) {
@@ -358,8 +378,9 @@ export function deriveOpportunities(observations, context, config, now) {
   const opportunities = [];
   for (const [key, list] of groups) {
     list.sort((a, b) => toDate(a.observed_at) - toDate(b.observed_at));
-    const latest = list[list.length - 1];
-    if (!isOpportunity(latest.evaluation)) continue;
+    const trusted = eligible ? list.filter((o) => eligible.has(o.id)) : list;
+    const latest = trusted[trusted.length - 1];
+    if (!latest || !isOpportunity(latest.evaluation)) continue;
 
     const history = list.map((o) => ({
       observed_at: o.observed_at,
@@ -375,7 +396,8 @@ export function deriveOpportunities(observations, context, config, now) {
     const recentMove = movedSkus.has(latest.sku_id);
     const highDispersion = dispersionFlags.has(latest.sku_id);
 
-    const outletCount = countAffectedOutlets(observations, latest.sku_id);
+    // Outlets affected NOW, not outlets ever affected: the count drives priority.
+    const outletCount = countAffectedOutlets(current ?? observations, latest.sku_id);
     const deviation = rangeDeviation(latest.confirmed_price, latest);
     const idxDeviation = priceIndexDeviation(latest.evaluation.priceIndex, latest);
 
@@ -751,6 +773,7 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
     .sort((a, b) => toDate(a.action_at) - toDate(b.action_at));
 
   const timeline = [];
+  const awaiting = [];
   let engagedWithSubsequent = 0;
   let engagedWithPriceChange = 0;
   const detectionToActionDays = [];
@@ -778,7 +801,23 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
         if (d !== null && d >= 0) detectionToActionDays.push(d);
       }
 
-      if (!after) continue;
+      if (!after) {
+        awaiting.push({
+          outcome: OUTCOME.AWAITING,
+          outlet_id: action.outlet_id,
+          outlet_name: before.outlet_name,
+          sku_id: skuId,
+          sku_name: before.sku_name,
+          action_type: action.action_type,
+          action_at: action.action_at,
+          before: {
+            observed_at: before.observed_at,
+            jti_price: before.confirmed_price,
+            status: before.evaluation?.status ?? null,
+          },
+        });
+        continue;
+      }
       engagedWithSubsequent += 1;
       const d2 = daysBetween(action.action_at, after.observed_at);
       if (d2 !== null) actionToNextObsDays.push(d2);
@@ -792,7 +831,38 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
         gapImprovements.push(round(Math.abs(gapBefore) - Math.abs(gapAfter), 2));
       }
 
+      const beforeSide = {
+        observed_at: before.observed_at,
+        jti_price: before.confirmed_price,
+        competitor_price: before.competitor_price,
+        gap: gapBefore ?? null,
+        price_index: before.evaluation?.priceIndex ?? null,
+        status: before.evaluation?.status ?? null,
+      };
+      const afterSide = {
+        observed_at: after.observed_at,
+        jti_price: after.confirmed_price,
+        competitor_price: after.competitor_price,
+        gap: gapAfter ?? null,
+        price_index: after.evaluation?.priceIndex ?? null,
+        status: after.evaluation?.status ?? null,
+      };
+
+      // Not "did the gap narrow" — did the price move closer to the corridor it is meant to
+      // sit in. A gap moving toward zero can be a price leaving its intended position.
+      const classified = classifyOutcome(beforeSide, afterSide, before, {
+        comparisonMethod: config.comparison_method,
+        tolerance: config.field_outcomes?.gap_tolerance ?? 0.01,
+        indexTolerance: config.field_outcomes?.index_tolerance ?? 0.1,
+      });
+
       timeline.push({
+        outcome: classified.outcome,
+        outcome_components: classified.components,
+        outcome_policy: classified.policy,
+        outcome_policy_note: classified.policy_note,
+        moved: movementSource(beforeSide, afterSide),
+        any_price_change: priceChanged,
         outlet_id: action.outlet_id,
         outlet_name: before.outlet_name,
         territory_name: before.territory_name,
@@ -802,22 +872,8 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
         action_type: action.action_type,
         action_at: action.action_at,
         user_id: action.user_id,
-        before: {
-          observed_at: before.observed_at,
-          jti_price: before.confirmed_price,
-          competitor_price: before.competitor_price,
-          gap: gapBefore ?? null,
-          price_index: before.evaluation?.priceIndex ?? null,
-          status: before.evaluation?.status ?? null,
-        },
-        after: {
-          observed_at: after.observed_at,
-          jti_price: after.confirmed_price,
-          competitor_price: after.competitor_price,
-          gap: gapAfter ?? null,
-          price_index: after.evaluation?.priceIndex ?? null,
-          status: after.evaluation?.status ?? null,
-        },
+        before: beforeSide,
+        after: afterSide,
         observed_price_change: round(after.confirmed_price - before.confirmed_price, 2),
         observed_gap_improvement:
           Number.isFinite(gapBefore) && Number.isFinite(gapAfter)
@@ -842,10 +898,19 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
     (t) => t.after.status === 'Within Recommended Range' && t.before.status !== 'Within Recommended Range',
   ).length;
 
+  const outcomes = summariseOutcomes([...timeline, ...awaiting]);
+
   return {
-    label: 'Observed price change after engagement',
+    label: 'Observed sequence after engagement',
     disclaimer:
       'Sequence of observations only. This view does not attribute price movement to field action.',
+    /**
+     * The four outcomes, each with the denominator it belongs to. "Any observed price
+     * change" is kept as a plain description of what the shelf did; it is not a success
+     * rate, and among the prices that changed are prices that moved the wrong way.
+     */
+    outcomes,
+    awaiting: awaiting.sort((a, b) => toDate(b.action_at) - toDate(a.action_at)),
     opportunities_identified: opportunities.length,
     opportunities_engaged: opportunitiesEngaged,
     outlet_agreed_to_review: agreedToReview,
@@ -949,14 +1014,19 @@ export function buildTopActions(opportunities, competitorMoves, dispersion, limi
  */
 export function buildAnalytics(data, filters, config, now = new Date().toISOString()) {
   const all = enrichObservations(data, config, now);
-  const scoped = applyFilters(all, filters);
+  const everything = applyFilters(all, filters);
 
-  const competitorMoves = detectCompetitorMoves(scoped, data, config, now);
+  // The trusted current picture drives the headline numbers; the full history drives trends
+  // and the record. Which one a screen is showing is stated on the screen.
+  const snapshot = applySnapshot(everything, config, { now, mode: filters.snapshot_mode });
+  const scoped = snapshot.observations;
+
+  const competitorMoves = detectCompetitorMoves(everything, data, config, now);
   const dispersion = calculateDispersion(scoped, config);
   const dispersionFlags = new Set(dispersion.filter((d) => d.high_dispersion).map((d) => d.sku_id));
   const opportunities = deriveOpportunities(
-    scoped,
-    { competitorMoves, dispersionFlags, fieldActions: data.field_actions },
+    everything,
+    { competitorMoves, dispersionFlags, fieldActions: data.field_actions, current: scoped },
     config,
     now,
   );
@@ -966,18 +1036,31 @@ export function buildAnalytics(data, filters, config, now = new Date().toISOStri
   kpis.strategic_opportunities = opportunities.filter((o) => o.is_strategic).length;
   kpis.high_priority_opportunities = opportunities.filter((o) => o.priority_label === 'High').length;
   kpis.recent_competitor_moves = competitorMoves.length;
-  kpis.coverage = calculateMarketCoverage(scoped, data.outlets, config, now);
+  kpis.coverage = calculateMarketCoverage(scoped, data.outlets, config, now, filters);
+
+  const coverage = calculateCoverage(scoped, everything, data, {
+    filters,
+    now,
+    windowDays: snapshot.window_days ?? config.freshness.aging_max_days,
+    excluded: snapshot.excluded,
+  });
 
   return {
     now,
     all,
+    snapshot,
+    coverage,
+    /** Every observation the filters select, before the snapshot narrows it. */
+    historical: everything,
     observations: scoped,
     kpis,
     matrix: buildPriceMatrix(scoped),
     opportunities,
     competitorMoves,
     dispersion,
-    fieldEffectiveness: calculateFieldEffectiveness(scoped, data, opportunities, config, now),
+    // Sequences need the full history: a before/after pair is two observations of the same
+    // shelf, and the snapshot deliberately keeps only one of them.
+    fieldEffectiveness: calculateFieldEffectiveness(everything, data, opportunities, config, now),
     territories: buildTerritorySummary(scoped, data, opportunities, config, now),
     topActions: buildTopActions(opportunities, competitorMoves, dispersion),
     categories: OPPORTUNITY_CATEGORIES,

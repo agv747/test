@@ -33,6 +33,13 @@ export const TABLES = {
     is_strategic: 'bool',
     strategic_priority: T,
     tier: T,
+    /**
+     * Pack configuration. A price is only comparable within one: SGD 14.20 for a pack of 20
+     * and SGD 14.20 for a pack of 10 are not the same price, and nothing on the screens said
+     * which was being shown. Every price in this system is per pack as configured here.
+     */
+    sticks_per_pack: I,
+    pack_type: T,
     active: 'bool',
   },
 
@@ -138,6 +145,21 @@ export const TABLES = {
     bounding_box: 'json',
     review_resolved: 'bool',
     reviewed_at: T,
+    /** Who confirmed or corrected it. "Reviewed" with nobody attached is not a review. */
+    reviewed_by: T,
+    /**
+     * Pack configuration as it stood when the price was read, alongside the rule and mapping
+     * snapshots and for the same reason: a later catalogue edit must not silently restate
+     * what was observed.
+     */
+    sticks_per_pack_snapshot: I,
+    pack_type_snapshot: T,
+    /**
+     * When the shelf was seen, versus when the reading reached the system. They differ for an
+     * offline capture, and "as of" means nothing if the two are conflated. `observed_at` above
+     * is the shelf; this is the upload.
+     */
+    recorded_at: T,
   },
 
   field_actions: {
@@ -191,6 +213,39 @@ export function ddlStatements() {
     return `CREATE TABLE IF NOT EXISTS ${table} (${cols})`;
   });
   return [...tables, ...INDEXES];
+}
+
+/**
+ * Statements that bring an existing database up to the current declaration.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is silent about a table that exists but is missing a column:
+ * adding `sticks_per_pack` to the descriptor changed the DDL and changed nothing in a
+ * deployed D1, where the table was created before the column existed. Reads then came back
+ * with the column absent and the feature simply did not appear — no error anywhere.
+ *
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so each statement is issued on its own and a
+ * "duplicate column name" is the expected outcome on an already-migrated database. The caller
+ * runs them one at a time and tolerates exactly that error, which is why this returns one
+ * statement per column rather than a batch.
+ */
+export function migrationStatements() {
+  const statements = [];
+  for (const [table, columns] of Object.entries(TABLES)) {
+    for (const [name, declared] of Object.entries(columns)) {
+      if (name === 'id') continue;
+      statements.push({
+        table,
+        column: name,
+        sql: `ALTER TABLE ${table} ADD COLUMN ${name} ${sqlType(declared)}`,
+      });
+    }
+  }
+  return statements;
+}
+
+/** Whether a failed ALTER simply means the column is already there. */
+export function isDuplicateColumnError(error) {
+  return /duplicate column name/i.test(String(error?.message ?? error ?? ''));
 }
 
 /** Converts one application object into the positional values for an INSERT. */

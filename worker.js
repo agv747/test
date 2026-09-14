@@ -22,6 +22,8 @@ import {
   columnNames,
   ddlStatements,
   fromRow,
+  isDuplicateColumnError,
+  migrationStatements,
   toRow,
   upsertSql,
 } from './shared/schema.js';
@@ -72,10 +74,49 @@ async function handleApi(request, env, url) {
     const body = await request.json();
     return json(await applyMutations(env, body.mutations ?? []));
   }
+  if (url.pathname === '/api/migrate' && request.method === 'POST') {
+    return json(await migrate(env));
+  }
   if (url.pathname === '/api/seed' && request.method === 'POST') {
     return seed(env, request);
   }
   return json({ error: 'Not found' }, 404);
+}
+
+/* --------------------------------------------------------------- migration */
+
+/**
+ * Brings a deployed database up to the current column declaration, without touching data.
+ *
+ * Seeding creates tables with `IF NOT EXISTS`, which does nothing at all to a table that
+ * already exists — so every column added to the descriptor after the first deploy was missing
+ * in production while the code read it back as `undefined`. Nothing failed; the feature was
+ * simply absent. This runs the additive `ALTER`s instead, one at a time, treating "duplicate
+ * column name" as success: it is what an already-migrated database says.
+ *
+ * It is safe to call repeatedly, and adds no data, so it needs no seed token — re-running it
+ * on a live database is a no-op by construction.
+ */
+async function migrate(env) {
+  // A table that does not exist yet cannot be altered, so create the missing ones first.
+  for (const statement of ddlStatements()) {
+    await env.DB.prepare(statement).run();
+  }
+
+  const added = [];
+  const already_present = [];
+  const failed = [];
+  for (const statement of migrationStatements()) {
+    const column = `${statement.table}.${statement.column}`;
+    try {
+      await env.DB.prepare(statement.sql).run();
+      added.push(column);
+    } catch (err) {
+      if (isDuplicateColumnError(err)) already_present.push(column);
+      else failed.push({ column, error: err.message });
+    }
+  }
+  return { ok: failed.length === 0, added, already_present: already_present.length, failed };
 }
 
 /* ------------------------------------------------------------- recognition */
@@ -378,9 +419,9 @@ async function seed(env, request) {
 
   const data = buildSeedData(new Date().toISOString());
 
-  for (const statement of ddlStatements()) {
-    await env.DB.prepare(statement).run();
-  }
+  // Creates any missing table AND adds any column declared since the tables were first made;
+  // `CREATE TABLE IF NOT EXISTS` alone leaves an existing table on its original columns.
+  await migrate(env);
 
   let written = 0;
   for (const table of TABLE_NAMES) {

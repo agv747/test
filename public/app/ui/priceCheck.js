@@ -28,6 +28,8 @@ import {
   indexCell,
   money,
   priceIndex,
+  PACK_UNIT_NOTE,
+  packUnitPill,
   statusPill,
   statusTone,
   strategicPill,
@@ -38,7 +40,8 @@ import {
   MARKET_CONTEXT_NOTE,
 } from './dom.js';
 import { dateTimeLabel } from '../lib/format.js';
-import { DEMO_IMAGES, loadSampleImage } from '../demoImages.js';
+import { DEMO_IMAGES, demoFixtureFor, loadSampleImage } from '../demoImages.js';
+import { describeRecognitionMode } from '../services/recognition/provider.js';
 import { shelfSchematic } from './shelfSchematic.js';
 
 export const narrow = true;
@@ -62,6 +65,15 @@ const state = {
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
   error: null,
 };
+
+/**
+ * Whether this visit has already been written.
+ *
+ * Deliberately outside `state`: a successful save ends by calling `reset()`, so a flag living
+ * in the wizard state would be cleared by the very write it is meant to guard, and the second
+ * tap of a double-tap would sail straight through it. Starting a new visit clears it.
+ */
+let saved = false;
 
 export function reset() {
   state.step = 'outlet';
@@ -242,6 +254,7 @@ function renderAcquireStep(ctx) {
     </div>
 
     ${state.images.some((i) => !i.quality.usable) ? qualityWarning() : ''}
+    ${recognitionModeCard()}
 
     <div class="toolbar">
       <button class="btn" data-action="back-to-outlet">‹ Change outlet</button>
@@ -250,6 +263,27 @@ function renderAcquireStep(ctx) {
         Process ${state.images.length || ''} image${state.images.length === 1 ? '' : 's'} →
       </button>
     </div>`;
+}
+
+/**
+ * What will read these images, named before the TME presses Process.
+ *
+ * Simulated detections and model-read detections are indistinguishable once they reach the
+ * results screen: the same prices, the same confidence bars, the same shelf. The only place
+ * the difference can be stated honestly is before it happens.
+ */
+function recognitionModeCard() {
+  let mode;
+  try {
+    mode = describeRecognitionMode(state.images, (image) => Boolean(demoFixtureFor(image)));
+  } catch {
+    return '';
+  }
+  return `<div class="mode-card mode-card--${esc(mode.tone)}" data-recognition-mode="${esc(mode.mode)}">
+    <div class="mode-card__label">Recognition mode</div>
+    <div class="mode-card__value">${esc(mode.label)}</div>
+    <div class="mode-card__note">${esc(mode.detail)}</div>
+  </div>`;
 }
 
 function renderThumbs() {
@@ -288,7 +322,8 @@ function qualityWarning() {
 /* --------------------------------------------------- step 3: processing */
 
 function renderProcessingStep() {
-  return `<div class="card processing">
+  return `${recognitionModeCard()}
+  <div class="card processing">
     ${PROCESSING_STEPS.map((label, i) => {
       const cls =
         i < state.processingStep ? 'processing__step--done' : i === state.processingStep ? 'processing__step--active' : '';
@@ -305,6 +340,7 @@ function renderResultsStep(ctx) {
   const competitor = state.drafts.filter((d) => !d.is_jti);
 
   return `
+    ${recognitionModeCard()}
     ${decisionCard(jti)}
     ${viewSwitch()}
     ${state.resultsView === 'schematic' ? renderSchematicCard(ctx) : ''}
@@ -541,10 +577,21 @@ function detectionDetail(draft, skuOptions) {
     rows.push(['Suggested next step', esc(draft.recommendation ?? '—')]);
   }
   rows.push(['Detected price (original)', money(draft.detected_price)]);
+  rows.push(['Price unit', `${packUnitPill(draft.sku)} <span class="xsmall muted">${esc(PACK_UNIT_NOTE)}</span>`]);
   rows.push(['Recognition confidence', confidenceBar(draft.recognition_confidence)]);
   if (draft.ticket_colour) rows.push(['Price ticket', `${ticketSwatch(draft.ticket_colour)} ${esc(draft.ticket_colour)}`]);
   rows.push(['Image source', esc(draft.image_source === 'camera' ? 'Camera' : 'Gallery')]);
   rows.push(['Recognition provider', esc(draft.recognition_provider ?? '—')]);
+  // Two different facts, so two different rows: when the shelf was seen, and when the reading
+  // reached the system. They coincide on a live capture and diverge on an offline one.
+  rows.push(['Observed at (shelf)', esc(dateTimeLabel(draft.observed_at))]);
+  rows.push(['Recorded at (upload)', esc(dateTimeLabel(draft.recorded_at))]);
+  if (draft.review_resolved) {
+    rows.push([
+      'Confirmed as read',
+      esc(`${dateTimeLabel(draft.reviewed_at)}${draft.reviewed_by ? ` · ${draft.reviewed_by}` : ''}`),
+    ]);
+  }
 
   return `<div class="detection__detail">
     <div class="form-grid mb">
@@ -577,11 +624,34 @@ function detectionDetail(draft, skuOptions) {
       ${rows.map(([k, v]) => `<div class="detection__row"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}
     </dl>
     <div class="toolbar mt">
+      ${confirmAsReadButton(draft)}
+      <div class="spacer"></div>
       <button class="btn btn--sm btn--danger" data-action="exclude-draft" data-draft="${esc(draft.draft_id)}">
         ${draft.excluded ? 'Include observation' : 'Exclude observation'}
       </button>
     </div>
   </div>`;
+}
+
+/**
+ * Confirming a reading without changing it.
+ *
+ * Until now the only way to clear a low-confidence detection was to correct it, so a TME who
+ * looked at the shelf and found the model right had nothing to press. The reading stayed
+ * "pending", was kept out of the current picture, and the person who had actually checked it
+ * left no trace. Worse, the only route out was to type the same number back in, which files a
+ * verification as a correction and poisons the very record corrections exist to build.
+ *
+ * So this records the check itself: reviewed, value unchanged, not a correction.
+ */
+function confirmAsReadButton(draft) {
+  if (draft.review_resolved) {
+    return `<span class="pill pill--good" title="${esc(`Confirmed at ${dateTimeLabel(draft.reviewed_at)}`)}">
+      ✓ Confirmed as read</span>`;
+  }
+  return `<button class="btn btn--sm" data-action="confirm-draft" data-draft="${esc(draft.draft_id)}">
+    ✓ Confirm as read
+  </button>`;
 }
 
 function competitorName(draft) {
@@ -722,6 +792,8 @@ export function onAction(action, el, ctx) {
       state.outletId = el.dataset.outlet;
       state.step = 'acquire';
       state.error = null;
+      // A new visit is a new thing to save; the previous one's guard must not block it.
+      saved = false;
       ctx.render();
       break;
     case 'back-to-outlet':
@@ -775,6 +847,16 @@ export function onAction(action, el, ctx) {
       break;
     case 'use-alternative': {
       applyEdit(el.dataset.draft, { sku_id: el.dataset.sku }, ctx);
+      break;
+    }
+    case 'confirm-draft': {
+      // Deliberately not routed through the correction path: nothing is being corrected,
+      // and `manual_correction` must stay false so the training record keeps its meaning.
+      applyEdit(
+        el.dataset.draft,
+        { review_resolved: true, reviewed_at: new Date().toISOString(), reviewed_by: ctx.user?.id ?? null },
+        ctx,
+      );
       break;
     }
     case 'exclude-draft': {
@@ -939,7 +1021,31 @@ function applyEdit(draftId, patch, ctx) {
   ctx.render();
 }
 
+/**
+ * Writes the visit exactly once, however many times Submit is pressed.
+ *
+ * The handler is synchronous, so a double-tap — routine on a phone, and likelier still when
+ * the first tap appears to do nothing — ran the whole function twice. The second run started
+ * after `reset()` had cleared the wizard, so it filed a second visit for a null outlet: a
+ * duplicate that is also malformed, in the one table the coverage denominators count.
+ *
+ * A flag rather than a disabled button, because the button is not the only way in and the
+ * guard has to hold wherever the second call comes from. It is released on failure so a
+ * genuine retry still works.
+ */
 function persistVisit(ctx, status) {
+  if (saved) return;
+  saved = true;
+  try {
+    writeVisit(ctx, status);
+  } catch (err) {
+    saved = false;
+    state.error = `Could not save this visit: ${err.message}`;
+    ctx.render();
+  }
+}
+
+function writeVisit(ctx, status) {
   const { store } = ctx;
   const visit = store.createVisit({ outlet_id: state.outletId, user_id: ctx.user.id });
   const imageRecords = state.images.map((img) =>

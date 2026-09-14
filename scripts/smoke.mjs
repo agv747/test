@@ -88,12 +88,12 @@ try {
   await page.goto(BASE, { waitUntil: 'load' });
   await wait(450);
 
-  // Baseline observation count, read before the field flow starts so that reading it
-  // never navigates away from the wizard.
+  // Baseline, read before the field flow starts so that reading it never navigates away
+  // from the wizard: the whole history, and what the outlet's own page last saw.
   await page.setViewportSize({ width: 1440, height: 950 });
   await page.selectOption('[data-action="switch-user"]', 'usr-mgr-1');
   await wait(450);
-  const before = await observationCount(page);
+  const beforeVisit = await outletHeader(page);
   await page.goto(BASE, { waitUntil: 'load' });
   await wait(400);
   await page.selectOption('[data-action="switch-user"]', 'usr-tme-1');
@@ -134,6 +134,17 @@ try {
   await wait(250);
   check((await page.locator('.thumb').count()) === 1, 'an image can be removed');
 
+  // What is about to read the photo, said BEFORE anything is processed. Simulated and
+  // model-read detections are indistinguishable once they reach the results screen.
+  check((await page.locator('[data-recognition-mode]').count()) === 1, 'the recognition mode is named before processing');
+  const modeBefore = await page.locator('[data-recognition-mode]').innerText();
+  check(/Demo recognition — simulated/.test(modeBefore), 'the simulator is named as simulated');
+  check(/agreed demo content/.test(modeBefore), 'a built-in sample says it returns agreed demo content');
+  check(
+    (await page.getAttribute('[data-recognition-mode]', 'data-recognition-mode')) === 'fixture',
+    'the built-in sample is flagged as fixture content',
+  );
+
   await page.click('[data-action="process"]');
   await wait(250);
   check((await page.locator('.processing__step').count()) > 0, 'staged processing feedback is shown');
@@ -142,6 +153,14 @@ try {
 
   const detections = await page.locator('.detection').count();
   check(detections >= 4, `recognition returned ${detections} detections`);
+
+  // The defect the fixture exists for: the Punggol sample used to come back with Winston Red
+  // but not Pall Mall Red, its own primary mapping, so the comparison screen was blank.
+  const resultsText = await page.locator('.field-app').innerText();
+  check(/Winston Red/.test(resultsText), 'the sample contains its strategic SKU');
+  check(/Pall Mall Red/.test(resultsText), 'and the competitor it is mapped to');
+  check(/14\.20/.test(resultsText) && /13\.50/.test(resultsText), 'at the agreed demo prices');
+  check(/Demo recognition — simulated/.test(resultsText), 'the results still say what read the photo');
   const pills = await page.locator('.detection .pill').evaluateAll((els) => els.map((e) => e.textContent.trim()));
   check(pills.some((p) => /Review Required/.test(p)), 'low-confidence detection is flagged Review Required');
   check(pills.some((p) => /Competitive Position At Risk|Recommended Range/.test(p)), 'price position statuses are shown');
@@ -235,6 +254,26 @@ try {
   check(centred.inViewport, 'the dialog is on screen without scrolling');
   check(centred.offCentre < 40, `the dialog is centred (${Math.round(centred.offCentre)}px off)`);
   await shot('05d-schematic-editor');
+
+  // A price is not a price until you know what it buys: every figure carries its pack.
+  check(/SGD \/ pack of 20/.test(dialogText), 'the price says which pack it is for');
+  check(/not compared/.test(dialogText), 'and that pack configurations are not mixed');
+
+  // Two timestamps, kept apart: when the shelf was seen, and when the reading arrived.
+  check(/Observed at \(shelf\)/.test(dialogText), 'the dialog dates the shelf');
+  check(/Recorded at \(upload\)/.test(dialogText), 'and separately dates the upload');
+
+  // A TME who looks at the shelf and finds the model right must have something to press that
+  // is not "type the same number back in" — that files a verification as a correction.
+  check(
+    (await page.locator('.modal [data-action="confirm-draft"]').count()) === 1,
+    'a reading can be confirmed without being changed',
+  );
+  await page.locator('.modal [data-action="confirm-draft"]').click();
+  await wait(350);
+  const confirmedText = await page.locator('.modal').innerText();
+  check(/Confirmed as read/.test(confirmedText), 'confirming is recorded on the reading');
+  check(!/\bcorrected\b/.test(confirmedText), 'and is not filed as a correction');
 
   // Correcting from the dialog changes the shelf behind it, and the dialog stays open.
   await page.fill('.modal input[data-edit="price"]', '19.95');
@@ -456,8 +495,13 @@ try {
   await page.selectOption('[data-action="switch-user"]', 'usr-mgr-1');
   await wait(500);
 
-  const after = await observationCount(page);
-  check(after > before, `submitted visit reached manager analytics (${before} → ${after} observations)`);
+  // The Control Tower now shows the CURRENT picture — one eligible observation per outlet,
+  // SKU and pack — so a fresh visit to an outlet already in it supersedes rather than adds,
+  // and a growing total would mean the repeat-visit weighting is back. The outlet's own page
+  // reads the full history, which is where a new visit must show up.
+  const afterVisit = await outletHeader(page);
+  check(afterVisit !== beforeVisit, 'submitted visit reached manager analytics');
+  check(/shelf-punggol-central\.jpg/.test(afterVisit), 'the outlet page names the image just submitted');
 
   const routes = [
     ['manager/tower', 'Price Control Tower'],
@@ -509,7 +553,7 @@ try {
   await page.goto(`${BASE}/#/manager/field-effectiveness`, { waitUntil: 'load' });
   await wait(500);
   const fxText = await page.locator('.content').innerText();
-  check(/Observed price change after engagement/i.test(fxText), 'field effectiveness uses observed-sequence wording');
+  check(/Observed sequence after engagement/i.test(fxText), 'field effectiveness uses observed-sequence wording');
   check(/does not attribute/i.test(fxText), 'causal attribution is explicitly disclaimed');
   await shot('12-field-effectiveness');
 
@@ -541,11 +585,16 @@ try {
 
 process.exit(errors.length ? 1 : 0);
 
-/** Reads the observation count the Price Control Tower reports. */
-async function observationCount(p) {
-  await p.goto(`${BASE}/#/manager/tower`, { waitUntil: 'load' });
-  await p.evaluate(() => new Promise((r) => setTimeout(r, 600)));
-  const text = await p.locator('.card__sub', { hasText: 'JTI observations' }).first().textContent();
-  // "855 JTI observations · 76 without a comparable competitor…" — take the leading count only.
-  return Number.parseInt(text.match(/\d+/)[0], 10);
+/**
+ * The Punggol outlet page's header: last visit, and the image that visit carried.
+ *
+ * The Control Tower now shows the CURRENT picture — one eligible observation per outlet, SKU
+ * and pack — so a fresh visit to an outlet already in it supersedes rather than adds, and its
+ * total is deliberately unchanged. The outlet's own page reads the full history, which is
+ * where a newly submitted visit has to appear.
+ */
+async function outletHeader(p) {
+  await p.goto(`${BASE}/#/outlet?id=out-e1`, { waitUntil: 'load' });
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+  return p.locator('.grid--kpi').first().innerText();
 }

@@ -196,6 +196,32 @@ export function money2(value, currency = 'SGD') {
   return money(value, currency);
 }
 
+/**
+ * The unit every price in this system is quoted in.
+ *
+ * "SGD 14.20" is not a price until you know what it buys. Two outlets selling the same brand
+ * in different pack configurations produce two numbers that look directly comparable and are
+ * not, and no screen said which pack was meant. So the unit is stated wherever a price is,
+ * and a comparison is only offered within one configuration.
+ */
+export const PACK_UNIT_NOTE =
+  'Every price is for one pack as configured on the SKU. Prices for different pack ' +
+  'configurations are not compared.';
+
+/** "SGD / pack of 20" — the caption a column or figure carries. */
+export function packUnitLabel(sku, currency = 'SGD') {
+  const type = sku?.pack_type ?? sku?.pack_type_snapshot ?? null;
+  const sticks = sku?.sticks_per_pack ?? sku?.sticks_per_pack_snapshot ?? null;
+  if (type) return `${currency} / ${type.toLowerCase()}`;
+  if (Number.isFinite(sticks)) return `${currency} / pack of ${sticks}`;
+  return `${currency} / pack`;
+}
+
+/** The same thing as a small pill, for a detail row or a card header. */
+export function packUnitPill(sku, currency = 'SGD') {
+  return `<span class="tag" title="${esc(PACK_UNIT_NOTE)}">${esc(packUnitLabel(sku, currency))}</span>`;
+}
+
 export function gapCell(gap) {
   if (gap === null || gap === undefined) return '<span class="muted">—</span>';
   return `<span class="${gap > 0 ? '' : 'muted'}">${signedMoney(gap)}</span>`;
