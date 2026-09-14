@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import worker from '../worker.js';
 import { buildDraftObservation } from '../public/app/services/visitService.js';
 import { shelfSchematic } from '../public/app/ui/shelfSchematic.js';
+import { flagVariantConflicts } from '../public/app/services/visitService.js';
 import { DEFAULT_CONFIG } from '../public/app/config.js';
 
 const SKUS = [
@@ -87,7 +88,8 @@ function drawShelf(detections) {
       observedAt: '2026-09-11T02:00:00.000Z',
     }),
   );
-  return { drafts, html: shelfSchematic(drafts) };
+  const flagged = flagVariantConflicts(drafts);
+  return { drafts: flagged, html: shelfSchematic(flagged) };
 }
 
 /* ------------------------------------------------------------- the request */
@@ -182,4 +184,86 @@ test('an unreadable answer fails visibly rather than drawing an empty shelf', as
   } finally {
     stub.restore();
   }
+});
+
+/* ------------------------------------ two variants at one price, told apart */
+
+/**
+ * The reported failure: "модель распознает разные скю как один скю. например на них цена
+ * одинаковая, пачка плохо читается, но ценник разного цвета".
+ */
+test('the second variant comes back as its own product with a named second guess', async () => {
+  const { body } = await recognise({
+    detections: [
+      {
+        product: 'Mevius Original',
+        price: 18.3,
+        confidence: 0.92,
+        shelf: 1,
+        facings: 2,
+        ticket: 'red',
+      },
+      {
+        // Same brand, same price, pack unreadable — the case that used to be merged away.
+        product: 'Mevius',
+        price: 18.3,
+        confidence: 0.45,
+        shelf: 1,
+        facings: 2,
+        ticket: 'blue',
+        alternatives: [
+          { product: 'Mevius Sky Blue', probability: 0.55 },
+          { product: 'Mevius Original', probability: 0.2 },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(body.detections.length, 2, 'two products, not one');
+  assert.deepEqual(body.detections.map((d) => d.ticket_colour), ['red', 'blue']);
+  // A bare "Mevius" already resolves to Mevius Original, so that alternative is the
+  // detection itself and is dropped; what is left is the one correction worth offering.
+  assert.equal(body.detections[1].sku_candidate, 'sku-jti-mevius-original');
+  assert.deepEqual(
+    body.detections[1].alternatives.map((a) => `${a.label} ${Math.round(a.confidence * 100)}%`),
+    ['Mevius Sky Blue 55%'],
+    'the TME gets a one-tap correction with the model probability on it',
+  );
+});
+
+test('when the model merges them anyway, the different tickets give it away', async () => {
+  // Both lines resolve to the same SKU. The same product does not have two ticket colours on
+  // one shelf, so this is flagged for the person standing at the shelf.
+  const { body } = await recognise({
+    detections: [
+      { product: 'Mevius Original', price: 18.3, confidence: 0.9, shelf: 1, facings: 2, ticket: 'red' },
+      { product: 'Mevius Original', price: 18.3, confidence: 0.9, shelf: 1, facings: 2, ticket: 'blue' },
+    ],
+  });
+  const { drafts, html } = drawShelf(body.detections);
+
+  assert.deepEqual(drafts.map((d) => d.variant_conflict), [true, true]);
+  assert.match(html, /check variant/);
+});
+
+test('the same product read consistently raises nothing', async () => {
+  const { body } = await recognise({
+    detections: [
+      { product: 'Mevius Original', price: 18.3, confidence: 0.9, shelf: 1, facings: 2, ticket: 'red' },
+      { product: 'Camel Blue', price: 16, confidence: 0.9, shelf: 2, facings: 3, ticket: 'blue' },
+    ],
+  });
+  const { drafts, html } = drawShelf(body.detections);
+
+  assert.ok(drafts.every((d) => !d.variant_conflict));
+  assert.doesNotMatch(html, /check variant/);
+});
+
+test('the ticket colour reaches the shelf drawing', async () => {
+  const { body } = await recognise({
+    detections: [{ product: 'Camel Blue', price: 16, confidence: 0.9, shelf: 1, facings: 1, ticket: 'green' }],
+  });
+  const { html } = drawShelf(body.detections);
+  assert.match(html, /class="swatch"/);
+  assert.match(html, /title="green price ticket"/);
 });

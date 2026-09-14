@@ -99,6 +99,8 @@ export function buildDraftObservation({
     raw_text: detection.raw_text,
     brand_candidate: detection.brand_candidate,
     alternatives: detection.alternatives ?? [],
+    /** The ticket colour the model read, the only thing telling two plain packs apart. */
+    ticket_colour: detection.ticket_colour ?? null,
     bounding_box: detection.bounding_box ?? null,
     // Shelf geometry the provider counted rather than measured. Held on the draft for the
     // schematic; `toRow` writes only declared columns, so neither reaches the database.
@@ -151,6 +153,44 @@ export function correctDraft(draft, patch, data, config, observedAt) {
 }
 
 /**
+ * Marks detections that look like two different variants reported as one product.
+ *
+ * Under plain packaging two variants of a brand sit side by side, look almost identical and
+ * usually cost the same. A vision model reading such a shelf resolves both to whichever
+ * variant it could read, and the two facings come back as one product at one price — the
+ * failure a TME will not notice, because the answer looks entirely reasonable.
+ *
+ * The price ticket is what tells them apart, so the model is asked for its colour. Two
+ * detections on the SAME shelf that resolve to the SAME SKU but carry DIFFERENT ticket
+ * colours are the signature: the same product does not have two ticket colours on one shelf.
+ *
+ * This flags rather than corrects. Which variant the second one actually is cannot be known
+ * from here — that is precisely what the model failed to read — so it is put in front of the
+ * TME, who is standing at the shelf.
+ *
+ * A detection the TME has corrected by hand takes no further part: the flag exists to catch
+ * what the model merged, and once a person looking at the pack has said what it is, the app
+ * has nothing left to raise. Without that, correcting one facing to the variant the model
+ * had already found on the same shelf simply re-raised the flag against itself.
+ */
+export function flagVariantConflicts(drafts) {
+  const seen = new Map();
+  for (const draft of drafts ?? []) {
+    if (!draft.sku_id || !draft.ticket_colour || draft.manual_correction) continue;
+    const key = `${draft.shelf ?? 'any'}|${draft.sku_id}`;
+    if (!seen.has(key)) seen.set(key, new Set());
+    seen.get(key).add(draft.ticket_colour.toLowerCase());
+  }
+
+  return (drafts ?? []).map((draft) => {
+    if (draft.manual_correction) return { ...draft, variant_conflict: false };
+    const key = `${draft.shelf ?? 'any'}|${draft.sku_id}`;
+    const colours = seen.get(key);
+    return { ...draft, variant_conflict: Boolean(colours && colours.size > 1) };
+  });
+}
+
+/**
  * Recomputes every draft's evaluation, wiring in competitor prices observed in the SAME
  * visit so the field user sees a live Price Index before submitting (§8.6).
  */
@@ -162,7 +202,7 @@ export function recomputeDrafts(drafts, config) {
     }
   }
 
-  return drafts.map((d) => {
+  return flagVariantConflicts(drafts).map((d) => {
     if (!d.is_jti) return { ...d, evaluation: null };
     const competitorPrice = d.competitor_sku_id_snapshot
       ? (competitorPrices.get(d.competitor_sku_id_snapshot) ?? null)
@@ -209,6 +249,7 @@ export function summariseVisit(drafts, images) {
     review_required: count(PRICE_POSITION_STATUS.REVIEW),
     no_recommendation: count(PRICE_POSITION_STATUS.NONE),
     manual_corrections: drafts.filter((d) => d.manual_correction).length,
+    variant_conflicts: drafts.filter((d) => d.variant_conflict && !d.excluded).length,
   };
 }
 

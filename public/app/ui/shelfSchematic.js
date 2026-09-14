@@ -26,6 +26,7 @@ import {
   money,
   statusPill,
   statusTone,
+  ticketSwatch,
 } from './dom.js';
 
 export const SCHEMATIC_NOTE = {
@@ -119,6 +120,8 @@ function block(draft, threshold) {
     isJti ? 'JTI' : 'competitor',
     draft.evaluation?.status ?? '',
     `recognition ${pct}, ${confidenceWord(draft.recognition_confidence, threshold)}`,
+    draft.ticket_colour ? `${draft.ticket_colour} price ticket` : '',
+    draft.variant_conflict ? 'check the variant' : '',
   ]
     .filter(Boolean)
     .join(', ');
@@ -130,12 +133,14 @@ function block(draft, threshold) {
       ${draft.sku?.is_strategic ? '<span class="pack__strategic" title="Strategic SKU">★</span>' : ''}
     </span>`;
 
-  return `<button type="button" class="block${draft.excluded ? ' block--excluded' : ''}"
+  return `<button type="button" class="block${draft.excluded ? ' block--excluded' : ''}${draft.variant_conflict ? ' block--conflict' : ''}"
     data-action="focus-detection" data-draft="${esc(draft.draft_id)}"
     data-facings="${counted}"
     aria-label="${esc(`${label}, ${counted} facing${counted === 1 ? '' : 's'}. Open to correct.`)}">
+    ${draft.variant_conflict ? '<span class="block__flag" title="Two facings read as the same product carry different price tickets">! check variant</span>' : ''}
     <span class="block__packs">${pack.repeat(drawn)}</span>
     <span class="ticket ticket--${tone}">
+      ${ticketSwatch(draft.ticket_colour)}
       <span class="ticket__price">${esc(Number.isFinite(price) ? price.toFixed(2) : '—')}</span>
       ${counted > 1 ? `<span class="ticket__facings">×${counted}</span>` : ''}
       <span class="ticket__conf ticket__conf--${confTone}">${esc(pct)}</span>

@@ -5,9 +5,11 @@ import {
   extractJson,
   matchSku,
   normalise,
+  parseAlternatives,
   parseCount,
   parseModelResponse,
   parsePrice,
+  parseTicketColour,
 } from '../shared/recognition.js';
 
 const SKUS = [
@@ -290,4 +292,99 @@ test('the recommended free model has no licence click-through', async () => {
   const model = RECOGNITION_MODELS.find((m) => m.id === RECOMMENDED_FREE_MODEL);
   assert.equal(model.licence, undefined, 'the default suggestion works without a legal step');
   assert.equal(model.tier, 'free');
+});
+
+/* ----------------------------------------- telling two plain packs apart */
+
+test('the prompt forbids merging two products that share a price', () => {
+  // The reported failure: two variants side by side, same price, pack text unreadable, and
+  // the model returns them as one product.
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /NEVER merge two products into one line because their prices match/);
+  assert.match(prompt, /an equal\s+price is not evidence/);
+  assert.match(prompt, /PRICE TICKET/);
+});
+
+test('the prompt asks for the ticket colour, which is what actually separates them', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /"ticket" is the colour/);
+  assert.match(prompt, /Use null if there is no ticket or you cannot tell/);
+});
+
+test('the prompt asks for a named second guess rather than a confident wrong answer', () => {
+  const prompt = buildPrompt(SKUS, 'SGD');
+  assert.match(prompt, /"alternatives" is OPTIONAL/);
+  assert.match(prompt, /probability between 0 and 1/);
+  assert.match(prompt, /A named second guess is worth far more than a confident wrong answer/);
+});
+
+test('an unreadable variant is asked for as its own uncertain line, not folded into a neighbour', () => {
+  assert.match(buildPrompt(SKUS, 'SGD'), /A separate uncertain line is useful; a merged confident one is not/);
+});
+
+test('the ticket colour comes back as the model described it', () => {
+  const response = JSON.stringify({
+    detections: [{ product: 'Winston Red', price: 13.6, ticket: '  Dark Blue ' }],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.equal(detections[0].ticket_colour, 'Dark Blue');
+});
+
+test('a missing or unusable ticket colour is null, never invented', () => {
+  assert.equal(parseTicketColour(undefined), null);
+  assert.equal(parseTicketColour(null), null);
+  assert.equal(parseTicketColour('   '), null);
+  assert.equal(parseTicketColour(7), null);
+  assert.equal(parseTicketColour('a'.repeat(80)).length, 24, 'and it cannot be a paragraph');
+});
+
+test('alternatives become one-tap corrections with the model probability on them', () => {
+  const response = JSON.stringify({
+    detections: [
+      {
+        product: 'Winston Red',
+        price: 13.6,
+        confidence: 0.6,
+        alternatives: [
+          { product: 'Winston Blue', probability: 0.3 },
+          { product: 'Mevius Original', probability: 0.1 },
+        ],
+      },
+    ],
+  });
+  const { detections } = parseModelResponse(response, SKUS);
+  assert.deepEqual(detections[0].alternatives, [
+    { sku_id: 'sku-jti-winston-blue', label: 'Winston Blue', confidence: 0.3 },
+    { sku_id: 'sku-jti-mevius-original', label: 'Mevius Original', confidence: 0.1 },
+  ]);
+});
+
+test('an alternative that is the detection itself, or matches nothing, is dropped', () => {
+  // An alternative that cannot be applied is not an alternative.
+  const alts = parseAlternatives(
+    [
+      { product: 'Winston Red', probability: 0.4 },
+      { product: 'Gudang Garam Surya', probability: 0.3 },
+      { product: 'Winston Blue', probability: 0.2 },
+    ],
+    SKUS,
+    { exclude: 'sku-jti-winston-red' },
+  );
+  assert.deepEqual(alts.map((a) => a.sku_id), ['sku-jti-winston-blue']);
+});
+
+test('alternatives are capped, deduplicated and given a probability when none was stated', () => {
+  const alts = parseAlternatives(
+    [{ product: 'Winston Blue' }, { product: 'Winston Blue' }, { product: 'Mevius Original' }, { product: 'Marlboro Red' }],
+    SKUS,
+  );
+  assert.equal(alts.length, 2);
+  assert.deepEqual(alts.map((a) => a.sku_id), ['sku-jti-winston-blue', 'sku-jti-mevius-original']);
+  assert.ok(alts.every((a) => a.confidence > 0 && a.confidence <= 1));
+});
+
+test('a response with no alternatives yields an empty list rather than undefined', () => {
+  const { detections } = parseModelResponse('[{"product":"Winston Red","price":13.6}]', SKUS);
+  assert.deepEqual(detections[0].alternatives, []);
+  assert.equal(detections[0].ticket_colour, null);
 });

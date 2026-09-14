@@ -31,6 +31,9 @@ import {
   statusPill,
   statusTone,
   strategicPill,
+  ticketSwatch,
+  variantConflictPill,
+  VARIANT_CONFLICT_NOTE,
   disclaimer,
   MARKET_CONTEXT_NOTE,
 } from './dom.js';
@@ -51,8 +54,9 @@ const state = {
   drafts: [],
   processingStep: 0,
   expanded: new Set(),
-  /** Results view: the working list, or the shelf drawn as a schematic. */
-  resultsView: 'list',
+  /** Results view. The shelf opens first: it is the shape the TME is standing in front of,
+   *  and a row of packs that does not match the shelf is noticed at a glance. */
+  resultsView: 'schematic',
   /** Open correction dialog, used from the schematic where there is no card to expand. */
   editingDraftId: null,
   action: { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] },
@@ -68,7 +72,7 @@ export function reset() {
   state.drafts = [];
   state.processingStep = 0;
   state.expanded = new Set();
-  state.resultsView = 'list';
+  state.resultsView = 'schematic';
   state.editingDraftId = null;
   state.action = { action_type: 'No action', notes: '', follow_up_date: '', sku_ids: [] };
   state.error = null;
@@ -368,10 +372,12 @@ function editorDialog(ctx) {
         <button class="modal__close" data-action="close-editor" aria-label="Close">✕</button>
       </div>
       <div class="modal__summary">
+        ${draft.variant_conflict ? variantConflictPill() : ''}
         ${draft.is_jti ? statusPill(draft.evaluation?.status) : '<span class="pill pill--none">Competitor observation</span>'}
         ${confidenceMeter(draft.recognition_confidence, ctx.config.confidence_review_threshold)}
         <span class="modal__price">${money(draft.confirmed_price)}</span>
       </div>
+      ${draft.variant_conflict ? `<p class="xsmall" style="color:var(--watch);margin:8px 0 0">${esc(VARIANT_CONFLICT_NOTE)}</p>` : ''}
       ${detectionDetail(draft, skuOptions)}
       <div class="toolbar modal__foot">
         <div class="spacer"></div>
@@ -391,9 +397,9 @@ function viewSwitch() {
       data-action="set-results-view" data-view="${view}"
       aria-pressed="${state.resultsView === view}">${label}</button>`;
   return `<div class="toolbar" style="margin-bottom:10px">
-    ${btn('list', '☰ List')}
     ${btn('schematic', '▤ Shelf schematic')}
-    <span class="xsmall muted">See the whole shelf at a glance</span>
+    ${btn('list', '☰ List')}
+    <span class="xsmall muted">Tap a pack to correct it</span>
   </div>`;
 }
 
@@ -483,6 +489,7 @@ function detectionCard(draft, ctx) {
           · ${esc(draft.raw_text ?? '')}</div>
         <div class="row" style="margin-top:4px">
           ${draft.is_jti ? statusPill(draft.evaluation?.status) : '<span class="pill pill--none">Competitor observation</span>'}
+          ${draft.variant_conflict ? variantConflictPill() : ''}
         </div>
         <div class="row" style="margin-top:4px">
           ${confidenceMeter(draft.recognition_confidence, ctx.config.confidence_review_threshold)}
@@ -535,6 +542,7 @@ function detectionDetail(draft, skuOptions) {
   }
   rows.push(['Detected price (original)', money(draft.detected_price)]);
   rows.push(['Recognition confidence', confidenceBar(draft.recognition_confidence)]);
+  if (draft.ticket_colour) rows.push(['Price ticket', `${ticketSwatch(draft.ticket_colour)} ${esc(draft.ticket_colour)}`]);
   rows.push(['Image source', esc(draft.image_source === 'camera' ? 'Camera' : 'Gallery')]);
   rows.push(['Recognition provider', esc(draft.recognition_provider ?? '—')]);
 
@@ -552,12 +560,17 @@ function detectionDetail(draft, skuOptions) {
     </div>
     ${
       draft.alternatives?.length
-        ? `<div class="mb"><span class="xsmall muted">Alternative candidates: </span>${draft.alternatives
-            .map(
-              (a) =>
-                `<button class="btn btn--sm" data-action="use-alternative" data-draft="${esc(draft.draft_id)}" data-sku="${esc(a.sku_id)}">${esc(a.label)}</button>`,
-            )
-            .join(' ')}</div>`
+        ? `<div class="mb">
+            <div class="xsmall muted">Could be instead — the model's own probability. One tap applies it:</div>
+            <div class="toolbar" style="margin-top:4px">${draft.alternatives
+              .map(
+                (a) =>
+                  `<button class="btn btn--sm" data-action="use-alternative"
+                    data-draft="${esc(draft.draft_id)}" data-sku="${esc(a.sku_id)}">${esc(a.label)}
+                    <span class="xsmall muted">${Math.round((a.confidence ?? 0) * 100)}%</span></button>`,
+              )
+              .join(' ')}</div>
+          </div>`
         : ''
     }
     <dl style="margin:0">
