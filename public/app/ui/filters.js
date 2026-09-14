@@ -91,7 +91,10 @@ export function filterBar(ctx, options = {}) {
         value="1" ${f.strategic_only ? 'checked' : ''} /> Strategic SKUs only</label>`
     : '';
 
-  const active = Object.keys(f).filter((k) => f[k]).length;
+  // The snapshot mode lives in the same bag as the filters, but it is not one: it says which
+  // picture is being shown, not which slice of it. Counting it would offer to "clear 1 filter"
+  // on a screen nobody had filtered, and clearing it would silently change the picture.
+  const active = Object.keys(f).filter((k) => k !== 'snapshot_mode' && f[k]).length;
 
   return `<div class="card">
     <div class="card__head">
@@ -105,7 +108,9 @@ export function filterBar(ctx, options = {}) {
 /** Shared handler — pages delegate `clear-filters` here. */
 export function handleFilterAction(action, el, ctx) {
   if (action === 'clear-filters') {
-    ctx.store.setSession({ filters: {} });
+    // Clearing the filters must not also switch the picture out from under the reader.
+    const mode = ctx.filters?.snapshot_mode;
+    ctx.store.setSession({ filters: mode ? { snapshot_mode: mode } : {} });
     ctx.render();
     return true;
   }

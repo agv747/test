@@ -213,6 +213,11 @@ a { color: var(--info); }
 .kpi__delta--up { color: var(--good); }
 .kpi__delta--down { color: var(--risk); }
 .kpi__delta--flat { color: var(--text-muted); }
+/* Outcome tones. The colour is a second signal only: each card states its own numerator and
+   denominator in words, so nothing here depends on telling green from red. */
+.kpi--good { border-color: var(--good-border); background: var(--good-bg); }
+.kpi--risk { border-color: var(--risk-border); background: var(--risk-bg); }
+.kpi--neutral { border-color: var(--border); }
 
 /* ------------------------------------------------------------------- pills */
 
@@ -759,6 +764,30 @@ textarea { min-height: 74px; resize: vertical; }
 .mode-card__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; opacity: 0.8; }
 .mode-card__value { font-size: 1rem; font-weight: 680; margin-top: 2px; }
 .mode-card__note { font-size: 0.8rem; margin-top: 5px; }
+
+/* Which picture a manager screen is showing, and what it held out. "68% aligned" reads
+   identically whether it means today's shelves or every reading ever taken. */
+.snapshot {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.snapshot__head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.snapshot__head .toolbar { margin: 0; margin-left: auto; }
+.snapshot__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; color: var(--text-muted); }
+.snapshot__value { font-size: 1.05rem; font-weight: 680; }
+.snapshot__meta { font-size: 0.82rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.snapshot__note { font-size: 0.78rem; color: var(--text-muted); margin: 6px 0 0; }
+.snapshot__excluded {
+  font-size: 0.78rem;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+.snapshot__pending { font-size: 0.8rem; margin-top: 6px; color: var(--watch); font-weight: 600; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .summary-grid > div {

@@ -23,7 +23,7 @@ import {
   suggestedAction,
 } from './opportunityService.js';
 import { rangeDeviation, priceIndexDeviation } from './pricePositionService.js';
-import { applySnapshot } from './snapshotService.js';
+import { applySnapshot, supersededByPending } from './snapshotService.js';
 import { OUTCOME, classifyOutcome, movementSource, summariseOutcomes } from './fieldOutcomeService.js';
 import { calculateCoverage, outletsInScope } from './coverageService.js';
 
@@ -778,7 +778,6 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
   let engagedWithPriceChange = 0;
   const detectionToActionDays = [];
   const actionToNextObsDays = [];
-  const gapImprovements = [];
 
   for (const action of actions) {
     const relatedSkuIds = action.sku_ids?.length
@@ -827,10 +826,6 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
 
       const gapBefore = before.evaluation?.gap;
       const gapAfter = after.evaluation?.gap;
-      if (Number.isFinite(gapBefore) && Number.isFinite(gapAfter)) {
-        gapImprovements.push(round(Math.abs(gapBefore) - Math.abs(gapAfter), 2));
-      }
-
       const beforeSide = {
         observed_at: before.observed_at,
         jti_price: before.confirmed_price,
@@ -916,16 +911,26 @@ export function calculateFieldEffectiveness(observations, data, opportunities, c
     outlet_agreed_to_review: agreedToReview,
     observed_price_changes: engagedWithPriceChange,
     engagements_with_subsequent_observation: engagedWithSubsequent,
-    engagement_to_price_change_rate: engagedWithSubsequent
-      ? round((engagedWithPriceChange / engagedWithSubsequent) * 100, 1)
-      : null,
+    /**
+     * There is deliberately no "engagement-to-price-change rate" here any more.
+     *
+     * It was the page's headline: four price changes in five engagements that had a later
+     * observation, shown as 80% beside the word "effectiveness". One of those four was a price
+     * that moved further from where it was meant to be, and none of the five is attributed to
+     * the visit. The same count survives inside `outcomes.any_price_change`, where it is
+     * labelled as a description of the shelf rather than a rate of success.
+     *
+     * Nor is there a median gap improvement. It measured |gap| getting smaller, which is not
+     * the same as the price moving toward its intended position: a gap narrowing toward zero
+     * can be a price leaving the corridor it was meant to sit in. The distance-to-corridor
+     * change is on each timeline entry, per comparison basis, in `outcome_components`.
+     */
     opportunities_resolved: resolved,
     opportunity_resolution_rate: opportunitiesEngaged
       ? round((resolved / opportunitiesEngaged) * 100, 1)
       : null,
     median_detection_to_action_days: round(median(detectionToActionDays), 1),
     median_action_to_next_observation_days: round(median(actionToNextObsDays), 1),
-    median_gap_improvement: round(median(gapImprovements), 2),
     timeline: timeline.sort((a, b) => toDate(b.action_at) - toDate(a.action_at)),
   };
 }
@@ -1019,6 +1024,10 @@ export function buildAnalytics(data, filters, config, now = new Date().toISOStri
   // The trusted current picture drives the headline numbers; the full history drives trends
   // and the record. Which one a screen is showing is stated on the screen.
   const snapshot = applySnapshot(everything, config, { now, mode: filters.snapshot_mode });
+  // A verified price still on screen while somebody has already been back and read something
+  // else. Which of the two is right is exactly what nobody has established, so it is carried
+  // through to be shown rather than resolved here.
+  snapshot.superseded_by_pending = supersededByPending(snapshot);
   const scoped = snapshot.observations;
 
   const competitorMoves = detectCompetitorMoves(everything, data, config, now);

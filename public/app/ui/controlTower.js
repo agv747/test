@@ -19,6 +19,7 @@ import {
   strategicPill,
 } from './dom.js';
 import { filterBar, handleFilterAction, handleFilterChange } from './filters.js';
+import { coveragePanel, handleSnapshotAction, snapshotBar } from './snapshotBar.js';
 import {
   COMPETITIVE_BUCKET_LABELS,
   MATRIX_INTERPRETATION,
@@ -41,8 +42,10 @@ export function render(ctx) {
   const a = ctx.analytics;
   return `
     ${disclaimer(esc(MARKET_CONTEXT_NOTE))}
+    ${snapshotBar(a)}
     ${filterBar(ctx)}
     ${kpiRow(a)}
+    ${coveragePanel(a.coverage, a.kpis.delta ?? {})}
     <div class="grid grid--2">
       <div>${matrixCard(a)}</div>
       <div>${topActionsCard(a)}</div>
@@ -67,12 +70,6 @@ function kpiRow(a) {
       delta: k.delta?.strategic_recommended_price_alignment,
     })}
     ${kpiCard({
-      label: 'Competitive Alignment',
-      value: pct(k.competitive_alignment),
-      meta: `${k.competitive_alignment_n} mapped JTI / competitor pairs`,
-      delta: k.delta?.competitive_alignment,
-    })}
-    ${kpiCard({
       label: 'Pricing Opportunities',
       value: String(k.pricing_opportunities),
       meta: `${k.high_priority_opportunities} high priority`,
@@ -86,11 +83,6 @@ function kpiRow(a) {
       label: 'Recent Competitor Moves',
       value: String(k.recent_competitor_moves),
       meta: 'Material competitor price changes in the period',
-    })}
-    ${kpiCard({
-      label: 'Market Coverage',
-      value: pct(k.coverage.coverage_pct),
-      meta: `${k.coverage.observed_outlets} of ${k.coverage.expected_outlets} outlets observed in ${k.coverage.window_days} days`,
     })}
     ${kpiCard({
       label: 'Data Confidence',
@@ -223,6 +215,7 @@ function drilldownCard(a, ctx) {
 
 export function onAction(action, el, ctx) {
   if (handleFilterAction(action, el, ctx)) return;
+  if (handleSnapshotAction(action, el, ctx)) return;
   switch (action) {
     case 'select-cell':
       selectedCell =

@@ -550,10 +550,76 @@ try {
   check(/P10/.test(skuText) && /P90/.test(skuText) && /Median/.test(skuText), 'percentiles are reported, not just an average');
   await shot('11-sku-intelligence');
 
+  /* ------------------------- which picture, and whose denominator */
+
+  await page.goto(`${BASE}/#/manager/tower`, { waitUntil: 'load' });
+  await wait(700);
+  check((await page.locator('[data-snapshot-mode]').count()) === 1, 'the Control Tower says which picture it is showing');
+  const snapText = await page.locator('[data-snapshot-mode]').innerText();
+  check(/Current picture/.test(snapText), 'and opens on the current picture');
+  check(/As of /.test(snapText), 'and dates it');
+  check(/freshness window \d+ days/.test(snapText), 'and states the freshness window');
+  check(/Held out|Nothing was held out/.test(snapText), 'and says what it held out');
+
+  // Four coverage questions, each printing the denominator it is a share of. The old single
+  // figure reported 25% for a territory whose every outlet had been visited.
+  const coverageCards = await page.locator('[data-coverage-metric]').count();
+  check(coverageCards === 4, `coverage is reported as four questions, not one (${coverageCards})`);
+  const coverageText = await page.locator('[data-coverage]').innerText();
+  check(/\d+ of \d+/.test(coverageText), 'every coverage figure shows its numerator and denominator');
+  // The card labels are upper-cased by the stylesheet, so match without regard to case.
+  check(/Outlet visit coverage/i.test(coverageText), 'outlet visit coverage is its own metric');
+  check(/Comparable-pair availability/i.test(coverageText), 'so is comparable-pair availability');
+
+  // Filtering to one territory must ask about that territory's own completeness.
+  const networkDenominator = Number(coverageText.match(/(\d+) of (\d+)/)[2]);
+  await page.selectOption('[data-filter="territory_id"]', 'ter-east');
+  await wait(700);
+  const eastText = await page.locator('[data-coverage]').innerText();
+  const eastDenominator = Number(eastText.match(/(\d+) of (\d+)/)[2]);
+  check(
+    eastDenominator < networkDenominator,
+    `a territory's coverage counts that territory's outlets (${eastDenominator} of a network ${networkDenominator})`,
+  );
+  await page.click('[data-action="clear-filters"]');
+  await wait(600);
+
+  // Historical mode returns every reading, and says so.
+  await page.click('[data-action="set-snapshot-mode"][data-mode="historical"]');
+  await wait(700);
+  const histText = await page.locator('[data-snapshot-mode]').innerText();
+  check(/Full history/.test(histText), 'the mode can be switched to the full history');
+  check(/not as a picture of the shelves today/.test(histText), 'and says what it must not be read as');
+  const histTotal = await page.locator('.card__sub', { hasText: 'JTI observations' }).first().innerText();
+  await page.click('[data-action="set-snapshot-mode"][data-mode="current"]');
+  await wait(700);
+  const currentTotal = await page.locator('.card__sub', { hasText: 'JTI observations' }).first().innerText();
+  check(
+    Number.parseInt(histTotal, 10) > Number.parseInt(currentTotal, 10),
+    `the current picture is narrower than the record (${currentTotal.split(' ')[0]} vs ${histTotal.split(' ')[0]})`,
+  );
+  await shot('14-snapshot-and-coverage');
+
   await page.goto(`${BASE}/#/manager/field-effectiveness`, { waitUntil: 'load' });
   await wait(500);
   const fxText = await page.locator('.content').innerText();
   check(/Observed sequence after engagement/i.test(fxText), 'field effectiveness uses observed-sequence wording');
+
+  // The 80% headline was four price changes out of five — one of them a price that moved
+  // further from where it was meant to be. Outcomes are now classified, not counted.
+  check((await page.locator('[data-outcomes]').count()) === 1, 'outcomes are classified, not counted');
+  const outcomeText = await page.locator('[data-outcomes]').innerText();
+  for (const outcome of ['Position improved', 'Position unchanged', 'Position worsened']) {
+    check(new RegExp(outcome, 'i').test(outcomeText), `${outcome} is reported separately`);
+  }
+  check(/\d+ of \d+ engagements with a later observation/.test(outcomeText), 'each outcome prints its denominator');
+  check(/not a success rate/.test(outcomeText), 'any observed price change is not presented as a success rate');
+  check(/awaiting one/.test(outcomeText), 'engagements with nothing observed since are counted');
+  check(
+    (await page.locator('[data-awaiting]').count()) === 1,
+    'and are listed rather than dropped from the denominator',
+  );
+  await shot('15-field-outcomes');
   check(/does not attribute/i.test(fxText), 'causal attribution is explicitly disclaimed');
   await shot('12-field-effectiveness');
 
