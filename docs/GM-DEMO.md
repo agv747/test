@@ -197,7 +197,7 @@ problem, not of the build.
 ## 3. Validation
 
 ```bash
-npm test        # 345 unit tests
+npm test        # 349 unit tests
 npm run smoke   # 160 browser checks against a real page, Playwright/Chromium
 SHOTS=1 npm run smoke   # the same, writing screenshots to .smoke-screenshots/
 npx esbuild worker.js --bundle --format=esm --outfile=/dev/null   # Worker bundle
