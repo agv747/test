@@ -622,6 +622,25 @@ textarea { min-height: 74px; resize: vertical; }
   gap: 3px;
 }
 .block--excluded { opacity: 0.45; }
+.block { position: relative; }
+
+/* Two facings read as one product with different price tickets — the failure a TME would
+   otherwise never notice, because the answer looks entirely reasonable. */
+.block__flag {
+  position: absolute;
+  top: -9px;
+  left: 0;
+  z-index: 1;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: var(--watch);
+  background: var(--watch-bg);
+  border: 1px solid var(--watch-border);
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.block--conflict .pack { border-color: var(--watch-border); }
 .block:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; border-radius: 6px; }
 
 /* Every pack that was counted, side by side — a product with three facings looks like three
@@ -680,6 +699,17 @@ textarea { min-height: 74px; resize: vertical; }
   box-shadow: var(--shadow);
 }
 .ticket__price { font-weight: 700; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+
+/* The reported ticket colour, drawn only for colour words that are actually understood. */
+.swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  flex: none;
+  vertical-align: -1px;
+}
 .ticket__facings { font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .ticket__conf { font-size: 0.6rem; font-variant-numeric: tabular-nums; }
 .ticket__conf--good { color: var(--good); }

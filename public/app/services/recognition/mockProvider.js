@@ -28,6 +28,13 @@ function shelfPlan(rand, index) {
   return { shelf: Math.floor(index / 2) + 1, facings: 1 + Math.floor(rand() * 3) };
 }
 
+/**
+ * The price ticket colour, which under plain packaging is the only thing distinguishing two
+ * variants of a brand standing side by side. Cycled deterministically so the demo shows the
+ * same signal the field does.
+ */
+const TICKETS = ['red', 'blue', 'green', 'orange', 'dark blue', 'yellow'];
+
 /** Detection "recipes" — engineered offsets from the recommended price. */
 const RECIPES = [
   { key: 'within', offset: 0, confidence: [0.93, 0.99] },
@@ -113,6 +120,7 @@ export const mockRecognitionProvider = {
         confidence,
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
+        ticket_colour: TICKETS[detections.length % TICKETS.length],
         ...shelfPlan(rand, detections.length),
       });
     });
@@ -143,6 +151,7 @@ export const mockRecognitionProvider = {
         confidence: round(0.86 + rand() * 0.12, 2),
         alternatives: [],
         detected_is_jti: false,
+        ticket_colour: TICKETS[detections.length % TICKETS.length],
         ...shelfPlan(rand, detections.length),
       });
     });
@@ -170,6 +179,7 @@ export const mockRecognitionProvider = {
         confidence: round(0.5 + rand() * 0.2, 2),
         alternatives: alternativesFor(jtiPool, sku, rand),
         detected_is_jti: true,
+        ticket_colour: TICKETS[detections.length % TICKETS.length],
         ...shelfPlan(rand, detections.length),
       });
     }

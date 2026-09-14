@@ -30,6 +30,18 @@ Rules:
 - Do not invent products you cannot see. Do not guess a price you cannot read.
 - confidence is your own 0-1 estimate of how certain you are of BOTH the product and the price.
 - Report the lines in the ORDER THEY APPEAR in the image, top to bottom, left to right.
+- NEVER merge two products into one line because their prices match. Standardised packs look
+  nearly identical and neighbouring variants of one brand usually cost the SAME, so an equal
+  price is not evidence that two facings are the same product. What tells them apart is the
+  PRICE TICKET: each variant has its own, and they differ in colour.
+- "ticket" is the colour of that product's printed price ticket, in one or two plain words as
+  you see it — "red", "dark blue", "green". Use null if there is no ticket or you cannot tell.
+- If you can see that two neighbouring products are different but cannot read which variant
+  one of them is, still report it as its own line, with a low confidence and with the text you
+  could read. A separate uncertain line is useful; a merged confident one is not.
+- "alternatives" is OPTIONAL: up to two OTHER products from the list above that this could be
+  instead, each with your own probability between 0 and 1. Give them whenever you are unsure
+  which variant it is. A named second guess is worth far more than a confident wrong answer.
 - "shelf" is which shelf the product sits on, counting from the TOP of the image and starting
   at 1. Everything standing on the same shelf gets the same number. For a printed price list,
   use the line number instead: first line is 1.
@@ -40,7 +52,7 @@ Rules:
   which shelf, and how many of it.
 
 Respond with JSON only, no commentary, in exactly this shape:
-{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.95,"text":"WINSTON Red $13.60","shelf":1,"facings":3}]}`;
+{"detections":[{"product":"Winston Red","price":13.60,"confidence":0.8,"text":"WINSTON Red $13.60","shelf":1,"facings":3,"ticket":"red","alternatives":[{"product":"Winston Blue","probability":0.15}]}]}`;
 }
 
 /* -------------------------------------------------------------- model input */
@@ -208,6 +220,47 @@ export function parseCount(value, { min = 1, max = 40 } = {}) {
 }
 
 /**
+ * The colour of the printed price ticket, as the model described it.
+ *
+ * Plain packaging leaves the ticket as the only thing distinguishing two variants of a brand
+ * that sit side by side at the same price — which is exactly the case where the model was
+ * reporting them as one product. Kept as free text, because a model that says "dark blue" is
+ * being more useful than one forced into a fixed list, and because this is a hint for a human
+ * to check rather than a value anything is computed from.
+ */
+export function parseTicketColour(value) {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.trim().replace(/\s+/g, ' ').slice(0, 24);
+  return cleaned.length ? cleaned : null;
+}
+
+/**
+ * Other products the model considered, with its own probability for each.
+ *
+ * A named second guess with a number on it is worth far more than a confident wrong answer:
+ * the TME gets a one-tap correction instead of a dropdown of the whole catalogue. Candidates
+ * that match nothing in the catalogue are dropped — an alternative that cannot be applied is
+ * not an alternative.
+ */
+export function parseAlternatives(value, skus, options = {}) {
+  const { max = 2, exclude = null } = options;
+  if (!Array.isArray(value)) return [];
+
+  const out = [];
+  for (const row of value) {
+    const label = row?.product ?? row?.name ?? row?.sku ?? row;
+    const match = matchSku(typeof label === 'string' ? label : '', skus);
+    if (!match || match.sku.id === exclude) continue;
+    if (out.some((a) => a.sku_id === match.sku.id)) continue;
+
+    const stated = clamp01(Number(row?.probability ?? row?.confidence));
+    out.push({ sku_id: match.sku.id, label: match.sku.name, confidence: round2(stated ?? 0.2) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
  * Converts a model response into the detection shape the application already consumes.
  *
  * Unmatched lines are kept with `sku_candidate: null` rather than dropped: the TME can
@@ -252,7 +305,8 @@ export function parseModelResponse(text, skus, options = {}) {
       // twice, gpt-4o returned a fabricated grid of rectangles above the packs it had just
       // read correctly. Detections are shown as a shelf schematic instead of on the photo.
       bounding_box: null,
-      alternatives: [],
+      alternatives: parseAlternatives(row?.alternatives, skus, { exclude: match?.sku.id }),
+      ticket_colour: parseTicketColour(row?.ticket ?? row?.ticket_colour),
       detected_is_jti: match ? Boolean(match.sku.is_jti) : null,
       match_score: match ? round2(match.score) : null,
       // Which shelf it stands on and how many of it stand there. Both are counts, which is

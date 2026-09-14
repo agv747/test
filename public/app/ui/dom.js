@@ -210,3 +210,58 @@ export function indexCell(index, min, max) {
   const icon = inBand === null ? '–' : inBand ? '✓' : '▲';
   return `<span class="pill pill--${tone}">${icon} ${priceIndex(index)}</span>`;
 }
+
+/* ------------------------------------------------------------ price tickets */
+
+/**
+ * Colour words a shelf ticket is actually described with, mapped to something drawable.
+ *
+ * Deliberately a short list. The model reports the colour in its own words, and a word that
+ * is not here gets no swatch rather than a guessed one — a wrong colour next to the word
+ * "green" would undermine the only signal distinguishing two plain packs.
+ */
+const TICKET_COLOURS = {
+  red: '#c2362c',
+  orange: '#d97a1a',
+  yellow: '#e3b71a',
+  green: '#2e8b4f',
+  blue: '#2563a8',
+  'light blue': '#5aa4d8',
+  'dark blue': '#1b3f73',
+  purple: '#6b3fa0',
+  pink: '#d2568e',
+  brown: '#7a5230',
+  grey: '#8a93a0',
+  gray: '#8a93a0',
+  silver: '#b9bfc7',
+  gold: '#b8962e',
+  white: '#ffffff',
+  black: '#1b1f26',
+};
+
+export function ticketColour(name) {
+  if (typeof name !== 'string') return null;
+  return TICKET_COLOURS[name.trim().toLowerCase()] ?? null;
+}
+
+/** A small square of the reported ticket colour, or nothing when the word is unknown. */
+export function ticketSwatch(name) {
+  const colour = ticketColour(name);
+  if (!colour) return '';
+  return `<span class="swatch" style="background:${colour}" title="${esc(name)} price ticket"></span>`;
+}
+
+/**
+ * The warning for two facings the model probably merged into one product.
+ *
+ * Stated as a question for the TME standing at the shelf, not as a finding: the app knows
+ * the two tickets differ, and knows nothing about which variant the second one is.
+ */
+export const VARIANT_CONFLICT_NOTE =
+  'Two facings on this shelf were read as the same product but have different price tickets. ' +
+  'Under plain packaging that usually means they are different variants at the same price. ' +
+  'Check the pack and correct it here.';
+
+export function variantConflictPill() {
+  return '<span class="pill pill--watch">! Check variant</span>';
+}

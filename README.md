@@ -15,7 +15,7 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 192 unit/integration tests (node:test, no browser needed)
+npm test        # 220 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
@@ -336,8 +336,9 @@ in the two files in step.
 
 ## Shelf schematic — the detections drawn as a shelf
 
-Step 3 of a price check offers two views of the same detections, and the working list stays
-the default:
+Step 3 of a price check offers two views of the same detections. **The shelf opens first**: it
+is the shape the TME is standing in front of, so a row of packs that does not match the shelf
+is noticed at a glance.
 
 - **List** — the cards a TME confirms and submits. Every number is on them.
 - **Shelf schematic** — the same detections arranged as a shelf: every pack that was counted
@@ -355,7 +356,44 @@ risk. Standardised packaging carries no brand colours, so neither does the drawi
 colour on a pack is the thing being judged. Colour is never the only signal — the rail head
 spells the status out in words.
 
-### What the model is asked for
+### Telling two plain packs apart
+
+Singapore packs carry no brand colours or logos, so two variants of a brand stand side by
+side, look nearly identical, and usually cost the same. A model reading such a shelf resolves
+both to whichever variant it could read, and the two facings come back as **one product at one
+price** — the failure a TME will not notice, because the answer looks entirely reasonable.
+
+What separates them on the shelf is the **price ticket**: each variant has its own, and they
+differ in colour. So:
+
+- The prompt forbids merging two products because their prices match, and says why an equal
+  price is not evidence of anything under plain packaging.
+- It asks for `ticket` — the colour of that product's printed ticket, in the model's own
+  words. The schematic draws it as a swatch beside the price, for colour words it actually
+  understands; a word it does not know gets no swatch rather than a guessed one.
+- It asks for `alternatives`: up to two other catalogue products this could be instead, each
+  with the model's own probability. They appear in the correction dialog as one-tap buttons
+  with the percentage on them — *Mevius Sky Blue 55%*. An alternative that matches nothing in
+  the catalogue is dropped, because an alternative that cannot be applied is not one.
+- It is told that an unreadable variant should come back as its own low-confidence line. A
+  separate uncertain line is useful; a merged confident one is not.
+
+And the app checks the answer: two detections on the **same shelf** resolving to the **same
+SKU** but carrying **different ticket colours** are flagged *Check variant*, on the shelf and
+in the dialog. The same product does not have two ticket colours on one shelf. It flags rather
+than corrects — which variant the second one is cannot be known from here, which is precisely
+what the model failed to read. A correction made by hand ends the question for that facing and
+its neighbour: once a person at the shelf has said what the pack is, the app has nothing left
+to raise.
+
+**Why not have the model look packs up online.** It would not help. The ambiguity is in the
+photograph, not in world knowledge: plain packaging means there is no pack artwork to match
+against, and the catalogue the answer must resolve to is already sent with every request. What
+was missing was a signal from the photo that separates two identical-looking packs — which is
+the ticket colour — and a way for the model to say "I am not sure, it might be this one",
+which is the alternatives list.
+
+### What else the model is asked for
 
 Two counts, and nothing that has to be measured:
 

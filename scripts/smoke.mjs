@@ -154,9 +154,12 @@ try {
 
   /* ---------------------------------------------------- shelf schematic */
 
-  check((await page.locator('.schematic').count()) === 0, 'the working list is the default view');
-  await page.click('[data-action="set-results-view"][data-view="schematic"]');
-  await wait(400);
+  // The shelf opens first: it is the shape the TME is standing in front of.
+  check((await page.locator('.schematic').count()) === 1, 'the shelf schematic is the default view');
+  check(
+    (await page.locator('.schematic').innerText()).includes('Review Required'),
+    'a detection needing review is visible on the shelf, not only in the list',
+  );
 
   const blocks = await page.locator('.block').count();
   check(blocks === detections, `every detection has a place on the shelf (${blocks})`);
@@ -188,6 +191,14 @@ try {
       return head.includes(sorted[0]) && head.includes(sorted.at(-1));
     }),
     `every shelf head accounts for the prices on it (${JSON.stringify(railPrices)})`,
+  );
+
+  // Plain packs are told apart by their price ticket, so the shelf shows the colour read.
+  const swatches = await page.locator('.ticket .swatch').count();
+  check(swatches > 0, `price ticket colours are drawn on the shelf (${swatches})`);
+  check(
+    (await page.locator('.ticket .swatch').first().getAttribute('title')).includes('price ticket'),
+    'a ticket colour is named, not shown as colour alone',
   );
 
   const note = await page.locator('.schematic p').first().innerText();
@@ -248,6 +259,8 @@ try {
   await page.click('[data-action="set-results-view"][data-view="list"]');
   await wait(300);
   check((await page.locator('.schematic').count()) === 0, 'the schematic can be switched back off');
+  await page.click('[data-action="set-results-view"][data-view="schematic"]');
+  await wait(300);
 
   /* ------------------------------- a vision model's answer, drawn as a shelf */
   //
@@ -263,10 +276,13 @@ try {
       body: JSON.stringify({
         model: 'openai:gpt-4o',
         detections: [
-          { raw_text: 'MEVIUS Original $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-original', price_candidate: 18.3, confidence: 0.95, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 3 },
-          { raw_text: 'MEVIUS Sky Blue $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-sky', price_candidate: 18.3, confidence: 0.94, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 2 },
-          { raw_text: 'CAMEL Blue $16.00', brand_candidate: 'Camel', sku_candidate: 'sku-jti-camel-blue', price_candidate: 16, confidence: 0.93, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 2, facings: 3 },
-          { raw_text: 'PALL MALL Red $16.00', brand_candidate: 'Pall Mall', sku_candidate: 'sku-bat-pallmall-red', price_candidate: 16, confidence: 0.91, bounding_box: null, alternatives: [], detected_is_jti: false, shelf: 2, facings: 2 },
+          { raw_text: 'MEVIUS Original $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-original', price_candidate: 18.3, confidence: 0.95, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 3, ticket_colour: 'red' },
+          { raw_text: 'MEVIUS Sky Blue $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-sky', price_candidate: 18.3, confidence: 0.94, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 1, facings: 2, ticket_colour: 'dark blue' },
+          { raw_text: 'CAMEL Blue $16.00', brand_candidate: 'Camel', sku_candidate: 'sku-jti-camel-blue', price_candidate: 16, confidence: 0.93, bounding_box: null, alternatives: [], detected_is_jti: true, shelf: 2, facings: 3, ticket_colour: 'orange' },
+          { raw_text: 'PALL MALL Red $16.00', brand_candidate: 'Pall Mall', sku_candidate: 'sku-bat-pallmall-red', price_candidate: 16, confidence: 0.91, bounding_box: null, alternatives: [], detected_is_jti: false, shelf: 2, facings: 2, ticket_colour: 'green' },
+          // The reported failure, reproduced: same SKU twice on one shelf, different tickets.
+          { raw_text: 'MEVIUS $18.30', brand_candidate: 'Mevius', sku_candidate: 'sku-jti-mevius-original', price_candidate: 18.3, confidence: 0.44, bounding_box: null, detected_is_jti: true, shelf: 1, facings: 2, ticket_colour: 'blue',
+            alternatives: [{ sku_id: 'sku-jti-mevius-sky', label: 'Mevius Sky Blue', confidence: 0.55 }] },
         ],
         unmatched: 0,
         duration_ms: 1200,
@@ -298,12 +314,41 @@ try {
   await page.click('[data-action="process"]');
   await wait(2200);
 
-  check((await page.locator('.detection').count()) === 4, 'the model answer became four detections');
+  check((await page.locator('.detection').count()) === 5, 'the model answer became five detections');
   await page.click('[data-action="set-results-view"][data-view="schematic"]');
   await wait(400);
 
   const drawnPacks = await page.locator('.pack').count();
-  check(drawnPacks === 10, `a row of packs is drawn per facing count, not one per product (${drawnPacks} of 10)`);
+  check(drawnPacks === 12, `a row of packs is drawn per facing count, not one per product (${drawnPacks} of 12)`);
+
+  // Two facings read as the same product but carrying different price tickets — the failure
+  // a TME would otherwise never notice, because the answer looks entirely reasonable.
+  check((await page.locator('.block--conflict').count()) === 2, 'the merged variant is flagged on both facings');
+  check(
+    (await page.locator('.block__flag').first().innerText()).includes('check variant'),
+    'and says what to check',
+  );
+
+  // Both facings carry the flag; the second is the one the model could not read, and the
+  // one carrying its alternative.
+  await page.locator('.block--conflict').last().click();
+  await wait(400);
+  const conflictDialog = await page.locator('.modal').innerText();
+  check(/Check variant/.test(conflictDialog), 'the dialog repeats the warning');
+  check(/different price tickets/.test(conflictDialog), 'and explains why');
+  check(/Mevius Sky Blue/.test(conflictDialog), "and offers the model's own second guess");
+  check(/55%/.test(conflictDialog), 'with its probability on it');
+  await shot('05e-variant-conflict');
+
+  // One tap applies the alternative, and the shelf behind the dialog follows.
+  await page.locator('.modal [data-action="use-alternative"]').first().click();
+  await wait(450);
+  check(
+    (await page.locator('.block--conflict').count()) === 0,
+    'applying the alternative resolves the conflict',
+  );
+  await page.keyboard.press('Escape');
+  await wait(350);
   const shelves = await page.locator('.rail__name').allInnerTexts();
   check(shelves.length === 2, `the two shelves the model counted became two shelves (${shelves.join(', ')})`);
 
