@@ -78,14 +78,24 @@ test('at least one image-reading model runs inside the free allocation', () => {
 /* --------------------------------------------------- bring-your-own-key models */
 
 test('a bring-your-own-key model names the secret it needs and the API model to call', () => {
+  // Each vendor has its own secret. Assuming one for all of them is how Admin came to report
+  // "API key not configured" against a Google model whenever the OpenAI key was absent.
+  const SECRET_BY_KIND = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' };
+
   const byoKey = RECOGNITION_MODELS.filter((m) => m.tier === 'byo-key');
   assert.ok(byoKey.length >= 1, 'at least one model runs on the account holder\'s own key');
   for (const model of byoKey) {
-    assert.equal(model.requires_secret, 'OPENAI_API_KEY');
+    assert.ok(SECRET_BY_KIND[model.kind], `${model.id} has an unrecognised kind: ${model.kind}`);
+    assert.equal(model.requires_secret, SECRET_BY_KIND[model.kind]);
     assert.ok(model.api_model, `${model.id} names the provider-side model id`);
-    assert.equal(model.kind, 'openai');
     assert.equal(model.reads_image, true);
   }
+});
+
+test('both vendors are offered, so one account being unavailable is not the end of it', () => {
+  const kinds = new Set(RECOGNITION_MODELS.filter((m) => m.tier === 'byo-key').map((m) => m.kind));
+  assert.ok(kinds.has('openai'));
+  assert.ok(kinds.has('gemini'));
 });
 
 test('a missing key is explained with where to put it, not as a generic failure', () => {
@@ -132,5 +142,97 @@ test('no model descriptor carries a credential', () => {
     const serialised = JSON.stringify(model);
     assert.doesNotMatch(serialised, /sk-[A-Za-z0-9]/, `${model.id} embeds no API key`);
     assert.equal(model.api_key, undefined);
+  }
+});
+
+/* ----------------------------------- a failure is a failure, not a fallback */
+//
+// The worst outcome available here is not an error. It is a screen full of plausible prices
+// that nobody read off a shelf, presented under the name of a model. A demo audience cannot
+// tell the two apart — the numbers look identical — so the failure has to reach them.
+//
+// The real provider is exercised; only the browser APIs it needs are stubbed. No live model
+// call is possible from this environment, so the boundary is where the stub goes.
+
+import { createRemoteProvider } from '../public/app/services/recognition/remoteProvider.js';
+
+const context = {
+  jtiSkus: [{ id: 'sku-jti-winston-red', name: 'Winston Red', brand_name: 'Winston', is_jti: true }],
+  competitorSkus: [],
+  currency: 'SGD',
+};
+const image = { id: 'img-1', name: 'shelf.jpg', file: { name: 'shelf.jpg', size: 1024 } };
+
+/** The minimum of the browser the provider touches: reading the file it was handed. */
+function withBrowserStubs(respond) {
+  const previousReader = globalThis.FileReader;
+  const previousFetch = globalThis.fetch;
+
+  globalThis.FileReader = class {
+    readAsDataURL() {
+      this.result = 'data:image/jpeg;base64,AAAA';
+      queueMicrotask(() => this.onload?.());
+    }
+  };
+  globalThis.fetch = async () => respond();
+
+  return () => {
+    globalThis.FileReader = previousReader;
+    globalThis.fetch = previousFetch;
+  };
+}
+
+const jsonResponse = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+});
+
+test('a model that errors throws rather than returning invented detections', async () => {
+  const restore = withBrowserStubs(() => jsonResponse(502, { error: 'upstream exploded' }));
+  try {
+    const provider = createRemoteProvider({ id: 'openai:gpt-4o', label: 'GPT-4o' });
+    await assert.rejects(() => provider.analyzePriceImage(image, context), /upstream exploded/);
+  } finally {
+    restore();
+  }
+});
+
+test('a model that reads nothing says so instead of falling back to the simulator', async () => {
+  const restore = withBrowserStubs(() => jsonResponse(200, { detections: [] }));
+  try {
+    const provider = createRemoteProvider({ id: 'openai:gpt-4o', label: 'GPT-4o' });
+    await assert.rejects(
+      () => provider.analyzePriceImage(image, context),
+      /did not read any product prices/,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('a model asked to read an image it has not got refuses rather than guessing', async () => {
+  const restore = withBrowserStubs(() => jsonResponse(200, { detections: [] }));
+  try {
+    const provider = createRemoteProvider({ id: 'openai:gpt-4o', label: 'GPT-4o' });
+    await assert.rejects(
+      () => provider.analyzePriceImage({ id: 'img-2', name: 'x.jpg' }, context),
+      /needs the original image file/,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('a model that answers is the one whose detections are used', async () => {
+  // The positive control for the three above: the same path, succeeding, returns exactly what
+  // came back — so a rejection above means the failure was raised, not that nothing ran.
+  const detections = [{ sku_candidate: 'sku-jti-winston-red', price_candidate: 14.2, confidence: 0.96 }];
+  const restore = withBrowserStubs(() => jsonResponse(200, { detections }));
+  try {
+    const provider = createRemoteProvider({ id: 'openai:gpt-4o', label: 'GPT-4o' });
+    assert.deepEqual(await provider.analyzePriceImage(image, context), detections);
+  } finally {
+    restore();
   }
 });

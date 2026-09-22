@@ -46,6 +46,9 @@ export function listProviders() {
     description: p.description ?? '',
     cost: p.cost ?? '',
     licence: p.licence ?? null,
+    /** Which Worker secret this model needs, so Admin can check for that one rather than
+     *  assuming every bring-your-own-key model is an OpenAI one. */
+    requires_secret: p.requires_secret ?? null,
   }));
 }
 
@@ -58,6 +61,58 @@ export function getActiveProvider() {
   const provider = providers.get(activeProviderId);
   if (!provider) throw new Error('No recognition provider registered');
   return provider;
+}
+
+/**
+ * What is about to read these images, stated before anybody presses Process.
+ *
+ * A demonstration that shows simulated prices is honest; one that shows simulated prices
+ * while the audience believes a model read the photo is not, and the difference is invisible
+ * on the results screen — the numbers look identical. So the mode is named on the step where
+ * the images are chosen, not discovered afterwards from a provider id in a detail row.
+ *
+ * There is no third state: a real provider that fails throws, and the workflow shows the
+ * error. It never quietly hands the image to the simulator.
+ *
+ * @param {object[]} images the images queued for this visit
+ * @param {(image:object)=>boolean} isFixture whether this image has agreed demo content
+ * @returns {{mode:string, label:string, detail:string, tone:string, provider:string}}
+ */
+export function describeRecognitionMode(images = [], isFixture = () => false) {
+  const provider = getActiveProvider();
+  const simulated = provider.reads_image === false;
+  const fixtures = images.filter((image) => isFixture(image)).length;
+
+  if (simulated && fixtures) {
+    return {
+      mode: 'fixture',
+      provider: provider.id,
+      tone: 'watch',
+      label: 'Demo recognition — simulated',
+      detail:
+        fixtures === images.length
+          ? 'Every image is a built-in sample and returns its agreed demo content. Nothing in the photo is read.'
+          : `${fixtures} of ${images.length} images are built-in samples and return their agreed demo content; the rest are simulated from the catalogue. Nothing in the photos is read.`,
+    };
+  }
+  if (simulated) {
+    return {
+      mode: 'simulated',
+      provider: provider.id,
+      tone: 'watch',
+      label: 'Demo recognition — simulated',
+      detail:
+        'Prices are generated from the SKU catalogue and price rules. The image is not read, so the detections are not observations of this shelf.',
+    };
+  }
+  return {
+    mode: 'real',
+    provider: provider.id,
+    tone: 'good',
+    label: `Real recognition — ${provider.label}`,
+    detail:
+      'The image is sent to the model through the Worker and the prices come back from it. If the model fails, this visit stops with an error rather than falling back to simulated prices.',
+  };
 }
 
 /**

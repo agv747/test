@@ -176,6 +176,15 @@ export function lineChart({ series, width = 720, height = 250, yLabel = '', mark
 
 export const CHART_COLORS = PALETTE;
 
+/**
+ * Distinct colours for several JTI series on one chart.
+ *
+ * Needed because a competitor event can touch three mapped SKUs at three price levels, and
+ * their positions must be drawn apart rather than averaged into one line. Each series is also
+ * named in the legend and in its own point tooltips, so the chart never rests on colour alone.
+ */
+export const SERIES_COLORS = ['#17614a', '#17559b', '#8a4b08', '#6b2d6b', '#0f6e7a'];
+
 /** Box-plot style dispersion summary for one series of prices. */
 export function boxPlot({ stats, width = 720, height = 92, recommendedMin = null, recommendedMax = null }) {
   if (!stats) return '';
@@ -204,4 +213,120 @@ export function boxPlot({ stats, width = 720, height = 92, recommendedMin = null
       <text x="${x(stats.p90)}" y="${cy + 26}" text-anchor="middle" font-size="10" fill="${PALETTE.axis}">P90 ${stats.p90.toFixed(2)}</text>
     </g>
   </svg></div>`;
+}
+
+/**
+ * Observed price intervals for several SKUs on one shared, labelled SGD axis (GM review §F).
+ *
+ * The chart this replaces drew each SKU as a filled bar whose length encoded its median price,
+ * on an axis with no numbers. A filled bar is read from zero, so prices clustered between
+ * SGD 12.60 and 16.00 appeared to differ by a factor of several — and a median alone hid
+ * exactly what the screen exists to show, which is how far apart outlets price the same pack.
+ *
+ * Here each row is its own distribution against a common axis: a thin P10–P90 line, a thicker
+ * P25–P75 body, and a median tick. Nothing is filled from zero, so no length is asked to carry
+ * a meaning it does not have; position along a printed axis carries it instead.
+ *
+ * P10–P90 is a dispersion interval — where the middle 80% of outlet prices fell. It is not a
+ * confidence interval, and it is not the full range: values outside it exist and stay
+ * inspectable in the table rather than being trimmed away.
+ *
+ * Below a usable sample the row draws its individual outlet prices as points. Five numbers
+ * have percentiles arithmetically, but drawing them as an interval implies a stable
+ * distribution that five readings cannot establish.
+ */
+export function intervalChart({ rows, axis, width = 760, rowHeight = 34, labelWidth = 190 }) {
+  if (!rows?.length || !axis) return '';
+
+  const pad = { top: 26, bottom: 34, right: 58 };
+  const plotWidth = width - labelWidth - pad.right;
+  const height = pad.top + rows.length * rowHeight + pad.bottom;
+  const x = scale(axis.min, axis.max, 0, plotWidth);
+
+  // A tick every 50 cents while that stays readable, else every dollar.
+  const step = axis.max - axis.min > 6 ? 1 : 0.5;
+  const ticks = [];
+  for (let v = axis.min; v <= axis.max + 1e-9; v += step) ticks.push(round2(v));
+
+  const gridlines = ticks
+    .map(
+      (t) => `<line x1="${x(t)}" y1="${pad.top - 8}" x2="${x(t)}" y2="${height - pad.bottom}"
+        stroke="${PALETTE.grid}" stroke-width="1"></line>
+      <text x="${x(t)}" y="${height - pad.bottom + 16}" text-anchor="middle" font-size="10"
+        fill="${PALETTE.axis}">${t.toFixed(2)}</text>`,
+    )
+    .join('');
+
+  const body = rows
+    .map((row, i) => {
+      const cy = pad.top + i * rowHeight + rowHeight / 2;
+      const colour = row.is_jti ? PALETTE.jti : PALETTE.competitor;
+
+      // The intended corridor, drawn only where one rule applies. Several outlet-specific
+      // rules averaged into one band would draw a reference nobody set.
+      const corridor =
+        Number.isFinite(row.recommended_min) && Number.isFinite(row.recommended_max)
+          ? `<rect x="${x(row.recommended_min)}" y="${cy - 13}"
+              width="${Math.max(2, x(row.recommended_max) - x(row.recommended_min))}" height="26"
+              fill="none" stroke="${PALETTE.recommended}" stroke-width="1" stroke-dasharray="3 2" rx="3">
+              <title>Recommended ${row.recommended_min.toFixed(2)} – ${row.recommended_max.toFixed(2)}</title>
+            </rect>`
+          : '';
+
+      const marks = row.small_sample
+        ? row.values
+            .map(
+              (v) => `<circle cx="${x(v)}" cy="${cy}" r="3.5" fill="${colour}" opacity="0.75">
+                <title>SGD ${v.toFixed(2)}</title></circle>`,
+            )
+            .join('')
+        : `<line x1="${x(row.p10)}" y1="${cy}" x2="${x(row.p90)}" y2="${cy}"
+             stroke="${colour}" stroke-width="1.5"></line>
+           <line x1="${x(row.p10)}" y1="${cy - 5}" x2="${x(row.p10)}" y2="${cy + 5}"
+             stroke="${colour}" stroke-width="1.5"></line>
+           <line x1="${x(row.p90)}" y1="${cy - 5}" x2="${x(row.p90)}" y2="${cy + 5}"
+             stroke="${colour}" stroke-width="1.5"></line>
+           <rect x="${x(row.p25)}" y="${cy - 8}" width="${Math.max(2, x(row.p75) - x(row.p25))}"
+             height="16" fill="${colour}" opacity="0.35" rx="2"></rect>
+           <line x1="${x(row.median_price)}" y1="${cy - 10}" x2="${x(row.median_price)}" y2="${cy + 10}"
+             stroke="${colour}" stroke-width="2.5"></line>`;
+
+      // Every row is also readable without the picture: owner in words, median in figures.
+      return `<g role="listitem" aria-label="${esc(
+        `${row.sku_name}, ${row.is_jti ? 'JTI' : 'competitor'}: median SGD ${row.median_price.toFixed(2)}, ` +
+          (row.small_sample
+            ? `${row.outlets} outlet prices observed`
+            : `P10 ${row.p10.toFixed(2)} to P90 ${row.p90.toFixed(2)} across ${row.outlets} outlets`),
+      )}">
+        <text x="${-labelWidth + 8}" y="${cy - 1}" font-size="11" font-weight="600" fill="currentColor">${esc(
+          truncate(row.sku_name, 24),
+        )}</text>
+        <text x="${-labelWidth + 8}" y="${cy + 11}" font-size="9" fill="${PALETTE.axis}">${esc(
+          `${row.is_jti ? 'JTI' : row.company ?? 'Competitor'} · ${row.outlets} outlet${row.outlets === 1 ? '' : 's'}`,
+        )}</text>
+        ${corridor}
+        ${marks}
+        <text x="${plotWidth + 8}" y="${cy + 4}" font-size="10" font-family="ui-monospace,monospace"
+          fill="currentColor">${row.median_price.toFixed(2)}</text>
+      </g>`;
+    })
+    .join('');
+
+  return `<div class="chart"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"
+    role="list" aria-label="Observed price intervals by SKU">
+    <g transform="translate(${labelWidth},0)">
+      ${gridlines}
+      <text x="${plotWidth / 2}" y="${height - 4}" text-anchor="middle" font-size="10"
+        fill="${PALETTE.axis}">SGD per pack — observed outlet prices</text>
+      ${body}
+    </g>
+  </svg></div>`;
+}
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
+}
+
+function truncate(text, max) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }

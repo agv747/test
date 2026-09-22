@@ -1,0 +1,274 @@
+{
+  "id": "tw-plan-v1",
+  "lineageId": "tw-plan",
+  "market": "TW",
+  "code": "TW-DEMO-CABINET",
+  "version": 1,
+  "revision": 1,
+  "status": "published",
+  "fixtureType": "regular_cabinet",
+  "rows": 2,
+  "columns": 10,
+  "validFrom": "2026-08-23T04:00:00.000Z",
+  "validTo": null,
+  "changeNote": "Synthetic regular cabinet for workflow demonstration.",
+  "updatedAt": "2026-08-23T04:00:00.000Z",
+  "updatedBy": "tw-manager",
+  "sourceName": "Prepared demonstration reference",
+  "slots": [
+    {
+      "key": "R1C1",
+      "row": 1,
+      "column": 1,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-A"
+      ],
+      "preferredSkuId": "TW-A",
+      "critical": true
+    },
+    {
+      "key": "R1C2",
+      "row": 1,
+      "column": 2,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-A"
+      ],
+      "preferredSkuId": "TW-A",
+      "critical": true
+    },
+    {
+      "key": "R1C3",
+      "row": 1,
+      "column": 3,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-B"
+      ],
+      "preferredSkuId": "TW-B",
+      "critical": true
+    },
+    {
+      "key": "R1C4",
+      "row": 1,
+      "column": 4,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-B"
+      ],
+      "preferredSkuId": "TW-B",
+      "critical": true
+    },
+    {
+      "key": "R1C5",
+      "row": 1,
+      "column": 5,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-C"
+      ],
+      "preferredSkuId": "TW-C",
+      "critical": true
+    },
+    {
+      "key": "R1C6",
+      "row": 1,
+      "column": 6,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-C"
+      ],
+      "preferredSkuId": "TW-C",
+      "critical": true
+    },
+    {
+      "key": "R1C7",
+      "row": 1,
+      "column": 7,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-D"
+      ],
+      "preferredSkuId": "TW-D",
+      "critical": true
+    },
+    {
+      "key": "R1C8",
+      "row": 1,
+      "column": 8,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-D"
+      ],
+      "preferredSkuId": "TW-D",
+      "critical": true
+    },
+    {
+      "key": "R1C9",
+      "row": 1,
+      "column": 9,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-E"
+      ],
+      "preferredSkuId": "TW-E",
+      "critical": true
+    },
+    {
+      "key": "R1C10",
+      "row": 1,
+      "column": 10,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-E"
+      ],
+      "preferredSkuId": "TW-E",
+      "critical": true
+    },
+    {
+      "key": "R2C1",
+      "row": 2,
+      "column": 1,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-A"
+      ],
+      "preferredSkuId": "TW-A",
+      "critical": true
+    },
+    {
+      "key": "R2C2",
+      "row": 2,
+      "column": 2,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-A"
+      ],
+      "preferredSkuId": "TW-A",
+      "critical": true
+    },
+    {
+      "key": "R2C3",
+      "row": 2,
+      "column": 3,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-B"
+      ],
+      "preferredSkuId": "TW-B",
+      "critical": true
+    },
+    {
+      "key": "R2C4",
+      "row": 2,
+      "column": 4,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-B"
+      ],
+      "preferredSkuId": "TW-B",
+      "critical": true
+    },
+    {
+      "key": "R2C5",
+      "row": 2,
+      "column": 5,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-C"
+      ],
+      "preferredSkuId": "TW-C",
+      "critical": true
+    },
+    {
+      "key": "R2C6",
+      "row": 2,
+      "column": 6,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-C"
+      ],
+      "preferredSkuId": "TW-C",
+      "critical": true
+    },
+    {
+      "key": "R2C7",
+      "row": 2,
+      "column": 7,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-D"
+      ],
+      "preferredSkuId": "TW-D",
+      "critical": true
+    },
+    {
+      "key": "R2C8",
+      "row": 2,
+      "column": 8,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-D"
+      ],
+      "preferredSkuId": "TW-D",
+      "critical": true
+    },
+    {
+      "key": "R2C9",
+      "row": 2,
+      "column": 9,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-E"
+      ],
+      "preferredSkuId": "TW-E",
+      "critical": true
+    },
+    {
+      "key": "R2C10",
+      "row": 2,
+      "column": 10,
+      "active": true,
+      "allowedSkuIds": [
+        "TW-E"
+      ],
+      "preferredSkuId": "TW-E",
+      "critical": true
+    }
+  ],
+  "requiredSkuIds": [
+    "TW-A",
+    "TW-B",
+    "TW-C",
+    "TW-D",
+    "TW-E"
+  ],
+  "facingRules": [
+    {
+      "skuId": "TW-A",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "skuId": "TW-B",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "skuId": "TW-C",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "skuId": "TW-D",
+      "min": 4,
+      "max": 4
+    },
+    {
+      "skuId": "TW-E",
+      "min": 4,
+      "max": 4
+    }
+  ]
+}

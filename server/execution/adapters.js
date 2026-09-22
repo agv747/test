@@ -1,0 +1,118 @@
+import { DomainError, requireThat } from '../../public/app/execution/domain.js';
+import { recognitionPrompt, schemaFor, validateOutput } from '../../public/app/execution/ai-contracts.js';
+import { toBase64 } from './storage.js';
+
+export const NATIVE_BASES = { gemini: 'https://generativelanguage.googleapis.com/v1beta', openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com/v1' };
+export function validateConnection(input, env) {
+  requireThat(['gemini', 'openai', 'anthropic', 'openai_compatible'].includes(input.provider), 'CONNECTION_INVALID', 'Choose a supported provider.');
+  requireThat(typeof input.name === 'string' && input.name.trim().length > 0 && input.name.length <= 80, 'CONNECTION_INVALID', 'Connection name is required (maximum 80 characters).');
+  requireThat(Array.isArray(input.allowedMarkets) && input.allowedMarkets.every(m => ['SG', 'TW'].includes(m)), 'CONNECTION_INVALID', 'Choose allowed markets.');
+  if (input.provider !== 'openai_compatible') return { ...input, baseUrl: NATIVE_BASES[input.provider], protocol: input.provider === 'openai' ? 'responses' : input.provider, headerMode: input.provider === 'gemini' ? 'x-goog-api-key' : input.provider === 'anthropic' ? 'x-api-key' : 'bearer' };
+  let url;
+  try { url = new URL(input.baseUrl); } catch { throw new DomainError('CONNECTION_INVALID', 'Invalid compatible endpoint URL.'); }
+  const host = url.hostname.toLowerCase();
+  requireThat(url.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443') && !url.search && !url.hash && !/^[\d.]+$/.test(host) && !host.includes(':') && !/(^|\.)(localhost|local|internal|invalid|test)$/.test(host) && host.includes('.') && !/%|\\/.test(input.baseUrl), 'ENDPOINT_NOT_ALLOWED', 'Use an approved public HTTPS hostname without credentials, query parameters or nonstandard ports.');
+  const base = url.href.replace(/\/$/, '');
+  const allowed = (env.AI_COMPATIBLE_BASE_URLS ?? '').split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+  requireThat(allowed.includes(base), 'ENDPOINT_NOT_ALLOWED', 'This exact base URL is not in the deployment administrator’s AI_COMPATIBLE_BASE_URLS allowlist.', 403);
+  requireThat(['responses', 'chat_completions'].includes(input.protocol) && ['bearer', 'api-key'].includes(input.headerMode), 'CONNECTION_INVALID', 'Choose Responses or Chat Completions and Bearer or api-key authentication.');
+  return { ...input, baseUrl: base };
+}
+const MESSAGES = {
+  AI_AUTH_FAILED: 'The provider rejected the credential or account permission.', AI_RATE_LIMITED: 'The provider rate limit was reached.', AI_MODEL_UNAVAILABLE: 'The model or endpoint is unavailable.', AI_IMAGE_UNSUPPORTED: 'The model rejected the image task or request format.', AI_REFUSED: 'The provider refused this request. No fallback was used.', AI_TIMEOUT: 'The provider request timed out.', AI_NETWORK_ERROR: 'The provider could not be reached.', AI_RESPONSE_TRUNCATED: 'The provider stopped before returning a complete result.',
+};
+export function providerError(code, details = {}) { return Object.assign(new DomainError(code, MESSAGES[code] ?? 'Recognition failed.', 502), { retryable: ['AI_RATE_LIMITED', 'AI_NETWORK_ERROR', 'AI_MODEL_UNAVAILABLE'].includes(code), ...details }); }
+function headers(connection, credential) {
+  const h = { 'content-type': 'application/json' };
+  if (connection.provider === 'gemini') h['x-goog-api-key'] = credential;
+  else if (connection.provider === 'anthropic') { h['x-api-key'] = credential; h['anthropic-version'] = '2023-06-01'; }
+  else if (connection.headerMode === 'api-key') h['api-key'] = credential;
+  else h.authorization = `Bearer ${credential}`;
+  return h;
+}
+export async function providerFetch(connection, credential, suffix, { body, timeoutMs = 60000, fetchImpl = fetch } = {}) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs), start = Date.now();
+  try {
+    const response = await fetchImpl(`${connection.baseUrl}${suffix}`, { method: body ? 'POST' : 'GET', headers: headers(connection, credential), ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'error', signal: controller.signal });
+    const retryHeader = response.headers.get('retry-after');
+    const retryAfterMs = retryHeader ? (/^\d+(\.\d+)?$/.test(retryHeader) ? Number(retryHeader) * 1000 : Math.max(0, Date.parse(retryHeader) - Date.now())) : 2000;
+    if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start });
+    const text = await response.text();
+    requireThat(text.length <= 2000000, 'AI_INVALID_OUTPUT', 'The provider response exceeded the output limit.');
+    let data; try { data = JSON.parse(text); } catch { throw new DomainError('AI_INVALID_OUTPUT', 'The provider returned a non-JSON response.'); }
+    return { data, requestId: response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? null, durationMs: Date.now() - start };
+  } catch (e) {
+    if (e.code) throw e;
+    throw providerError(controller.signal.aborted ? 'AI_TIMEOUT' : 'AI_NETWORK_ERROR', { durationMs: Date.now() - start });
+  } finally { clearTimeout(timer); }
+}
+export async function listProviderModels(connection, credential, cursor = null, options = {}) {
+  requireThat(!cursor || typeof cursor === 'string' && cursor.length <= 1000, 'CURSOR_INVALID', 'Invalid pagination cursor.');
+  const suffix = connection.provider === 'gemini' ? `/models?pageSize=100${cursor ? `&pageToken=${encodeURIComponent(cursor)}` : ''}` : `/models${connection.provider === 'anthropic' ? `?limit=100${cursor ? `&after_id=${encodeURIComponent(cursor)}` : ''}` : cursor ? `?after=${encodeURIComponent(cursor)}` : ''}`;
+  const { data } = await providerFetch(connection, credential, suffix, { ...options, timeoutMs: 15000 });
+  const list = connection.provider === 'gemini' ? data.models : data.data;
+  requireThat(Array.isArray(list), 'AI_INVALID_OUTPUT', 'The provider did not return a model list. Add an exact model ID manually.');
+  return { models: list.map(m => ({ remoteModelId: (m.name ?? m.id).replace(/^models\//, ''), displayName: m.displayName ?? m.display_name ?? m.id ?? m.name, providerMetadata: { inputTokenLimit: m.inputTokenLimit ?? null, outputTokenLimit: m.outputTokenLimit ?? null, supportedGenerationMethods: m.supportedGenerationMethods ?? null } })), nextCursor: data.nextPageToken ?? (data.has_more ? data.last_id ?? list.at(-1)?.id : null) };
+}
+export function buildProviderRequest(connection, model, input, settings = {}) {
+  let prompt = recognitionPrompt(input, settings.repair);
+  if (model.coordinateConvention === 'yxyx_1000') prompt += '\nFor this explicitly configured model, express every bbox as [ymin,xmin,ymax,xmax] on a 0–1000 scale instead of xywh. The adapter converts it before validation.';
+  if (model.coordinateConvention === 'xywh_pixels') prompt += '\nFor this explicitly configured model, express every bbox as [x,y,width,height] in the declared source image pixels instead of normalized coordinates. The adapter converts it before validation.';
+  const schema = schemaFor(input.task), max = settings.maxOutputTokens ?? 8192;
+  const images = input.images.map(i => ({ ...i, base64: i.base64 ?? toBase64(i.bytes) }));
+  const structured = model.structuredOutput !== false;
+  if (connection.provider === 'gemini') {
+    const parts = [{ text: prompt }, ...images.flatMap(i => [{ text: `Audit image ID: ${i.imageId}` }, { inlineData: { mimeType: i.mimeType, data: i.base64 } }])];
+    return { suffix: `/models/${encodeURIComponent(model.remoteModelId.replace(/^models\//, ''))}:generateContent`, body: { contents: [{ role: 'user', parts }], generationConfig: { maxOutputTokens: max, responseMimeType: 'application/json', ...(structured ? { responseJsonSchema: schema } : {}) } } };
+  }
+  if (connection.provider === 'anthropic') return { suffix: '/messages', body: { model: model.remoteModelId, max_tokens: max, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, ...images.flatMap(i => [{ type: 'text', text: `Audit image ID: ${i.imageId}` }, { type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.base64 } }])] }], ...(structured ? { output_config: { format: { type: 'json_schema', schema } } } : {}) } };
+  if (connection.protocol === 'chat_completions') return { suffix: '/chat/completions', body: { model: model.remoteModelId, max_tokens: max, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mimeType};base64,${i.base64}` } }))] }], ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'retail_observations', strict: true, schema } } } : {}) } };
+  return { suffix: '/responses', body: { model: model.remoteModelId, store: false, max_output_tokens: max, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, ...images.flatMap(i => [{ type: 'input_text', text: `Audit image ID: ${i.imageId}` }, { type: 'input_image', image_url: `data:${i.mimeType};base64,${i.base64}` }])] }], ...(structured ? { text: { format: { type: 'json_schema', name: 'retail_observations', strict: true, schema } } } : {}) } };
+}
+export function parseProviderResponse(provider, protocol, data) {
+  let raw, usage, resolvedModelId = data.model ?? null;
+  if (provider === 'gemini') {
+    const candidate = data.candidates?.[0];
+    if (data.promptFeedback?.blockReason || ['SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'RECITATION'].includes(candidate?.finishReason)) throw providerError('AI_REFUSED');
+    if (candidate?.finishReason === 'MAX_TOKENS') throw providerError('AI_RESPONSE_TRUNCATED', { usage: data.usageMetadata ?? null });
+    requireThat(candidate?.finishReason === 'STOP', 'AI_INVALID_OUTPUT', 'The provider did not produce a complete candidate.');
+    raw = (candidate.content?.parts ?? []).filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join(''); usage = data.usageMetadata ?? null; resolvedModelId = data.modelVersion ?? null;
+  } else if (provider === 'anthropic') {
+    if (data.stop_reason === 'refusal') throw providerError('AI_REFUSED');
+    if (data.stop_reason === 'max_tokens') throw providerError('AI_RESPONSE_TRUNCATED', { usage: data.usage ?? null });
+    requireThat(data.stop_reason === 'end_turn', 'AI_INVALID_OUTPUT', 'The model did not finish the requested observation.');
+    raw = (data.content ?? []).filter(p => p.type === 'text').map(p => p.text).join(''); usage = data.usage ?? null;
+  } else if (protocol === 'chat_completions') {
+    const choice = data.choices?.[0];
+    if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw providerError('AI_REFUSED');
+    if (choice?.finish_reason === 'length') throw providerError('AI_RESPONSE_TRUNCATED', { usage: data.usage ?? null });
+    requireThat(choice?.finish_reason === 'stop', 'AI_INVALID_OUTPUT', 'The model did not finish the requested observation.'); raw = choice.message?.content; usage = data.usage ?? null;
+  } else {
+    const content = (data.output ?? []).flatMap(o => o.content ?? []);
+    if (content.some(c => c.type === 'refusal')) throw providerError('AI_REFUSED');
+    if (data.status === 'incomplete') throw providerError('AI_RESPONSE_TRUNCATED', { usage: data.usage ?? null });
+    requireThat(data.status === 'completed', 'AI_INVALID_OUTPUT', 'The model did not complete the response.'); raw = content.filter(c => c.type === 'output_text').map(c => c.text).join(''); usage = data.usage ?? null;
+  }
+  requireThat(typeof raw === 'string' && raw.trim(), 'AI_INVALID_OUTPUT', 'The provider returned no observation JSON.');
+  return { raw, usage, resolvedModelId, responseId: data.id ?? data.responseId ?? null };
+}
+export async function runProvider(connection, credential, model, input, settings, options = {}) {
+  const request = buildProviderRequest(connection, model, input, settings);
+  const response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: settings.timeoutMs, ...options });
+  let parsed;
+  try { parsed = parseProviderResponse(connection.provider, connection.protocol, response.data); }
+  catch (e) { e.durationMs = response.durationMs; e.requestId = response.requestId; throw e; }
+  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs: response.durationMs, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
+  catch (e) { Object.assign(e, parsed, { durationMs: response.durationMs, requestId: response.requestId }); throw e; }
+}
+/** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */
+export function estimateCost(usage, pricing) {
+  if (!usage || !pricing?.currency || !pricing?.version || !pricing?.source || !pricing?.effectiveFrom || !pricing?.categories?.length || !pricing.completeBillingCoverage) return null;
+  let amount = 0;
+  for (const c of pricing.categories) {
+    const value = c.usagePath.split('.').reduce((v, key) => v?.[key], usage);
+    if (!Number.isFinite(value) || value < 0 || !Number.isFinite(c.ratePerMillion) || c.ratePerMillion < 0) return null;
+    amount += value * c.ratePerMillion / 1000000;
+  }
+  return { amount, currency: pricing.currency, pricingVersion: pricing.version, source: pricing.source, label: 'Estimated cost' };
+}

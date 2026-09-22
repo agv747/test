@@ -112,7 +112,23 @@ export function buildDraftObservation({
     currency: config.currency,
     recognition_confidence: detection.confidence ?? null,
     manual_correction: false,
+    /** Nobody has looked at this yet; "Confirm as read" is what sets these. */
+    review_resolved: false,
+    reviewed_at: null,
+    reviewed_by: null,
+    /**
+     * When the shelf was seen, and — separately — when the reading reached the system. They
+     * are the same for a live capture and differ for one taken offline; an "as of" date that
+     * silently means one or the other is not an as-of date.
+     */
     observed_at: observedAt,
+    recorded_at: new Date().toISOString(),
+    /**
+     * The pack this price is for, as configured now. Snapshotted beside the rule and mapping:
+     * a later catalogue edit must not restate what was read off the shelf.
+     */
+    sticks_per_pack_snapshot: sku?.sticks_per_pack ?? null,
+    pack_type_snapshot: sku?.pack_type ?? null,
     excluded: false,
     exclusion_reason: null,
     ...snapshotPriceRule(rule),
@@ -144,6 +160,10 @@ export function correctDraft(draft, patch, data, config, observedAt) {
       ? resolveCompetitorMapping(data.competitor_mappings, sku.id, ctx, observedAt)
       : null;
     Object.assign(next, snapshotPriceRule(rule), snapshotCompetitorMapping(mapping));
+    // A different product can be a different pack, and the price means something different
+    // with it. The snapshot follows the correction rather than keeping the old unit.
+    next.sticks_per_pack_snapshot = sku?.sticks_per_pack ?? null;
+    next.pack_type_snapshot = sku?.pack_type ?? null;
   }
 
   if (skuChanged || priceChanged) {

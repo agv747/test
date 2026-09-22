@@ -141,7 +141,9 @@ test('the scripted persistent strategic opportunity is detected in the East', ()
 });
 
 test('the scripted competitor price drop is detected as a material move', () => {
-  const moves = detectCompetitorMoves(analytics.observations, data, config, NOW);
+  // A move is a comparison between two points in time, so it reads the full history rather
+  // than the current snapshot, which deliberately holds only the latest of each pair.
+  const moves = detectCompetitorMoves(analytics.historical, data, config, NOW);
   const move = moves.find((m) => m.competitor_sku_id === 'sku-bat-pallmall-red');
   assert.ok(move, 'Pall Mall Red move detected');
   assert.ok(move.change < 0, 'price decreased');
@@ -206,7 +208,8 @@ test('ladder views can be restricted to own brand or competitors', () => {
 
 test('time series groups medians by period in chronological order', () => {
   const series = buildTimeSeries(
-    analytics.observations.filter((o) => o.sku_id === 'sku-jti-winston-red' || o.sku_id === 'sku-pmi-lm-red'),
+    // Trends are historical by definition; the snapshot keeps one observation per outlet.
+    analytics.historical.filter((o) => o.sku_id === 'sku-jti-winston-red' || o.sku_id === 'sku-pmi-lm-red'),
     'week',
   );
   assert.ok(series.length > 3);
@@ -218,11 +221,41 @@ test('time series groups medians by period in chronological order', () => {
 
 test('field effectiveness reports observed sequence without claiming causality', () => {
   const fx = analytics.fieldEffectiveness;
-  assert.equal(fx.label, 'Observed price change after engagement');
+  assert.equal(fx.label, 'Observed sequence after engagement');
   assert.match(fx.disclaimer, /does not attribute/i);
   assert.ok(fx.timeline.length > 0);
   assert.ok(fx.opportunities_identified > 0);
-  assert.ok(fx.engagement_to_price_change_rate !== null);
+  assert.ok(fx.outcomes.any_price_change.pct !== null);
+});
+
+test('an engagement is classified by where the price ended up, not by whether it moved', () => {
+  // The old headline was four price changes in five engagements, presented as 80%
+  // effectiveness. Among those four was a price that moved away from its intended position.
+  const { outcomes } = analytics.fieldEffectiveness;
+
+  assert.equal(
+    outcomes.improved.numerator + outcomes.unchanged.numerator +
+      outcomes.worsened.numerator + outcomes.unclassified.numerator,
+    outcomes.with_subsequent_observation,
+    'every observed sequence lands in exactly one outcome',
+  );
+  assert.equal(
+    outcomes.engagements,
+    outcomes.with_subsequent_observation + outcomes.awaiting_observation,
+    'and engagements with nothing observed since are counted, not dropped',
+  );
+  for (const key of ['improved', 'unchanged', 'worsened', 'any_price_change']) {
+    assert.equal(outcomes[key].denominator, outcomes.with_subsequent_observation);
+  }
+});
+
+test('every timeline entry says which side of the pair moved', () => {
+  // A narrowing gap is not evidence that JTI acted; the competitor may simply have moved.
+  for (const entry of analytics.fieldEffectiveness.timeline) {
+    assert.match(entry.moved, /JTI price moved|competitor price moved|both prices moved|neither price moved/);
+    assert.ok(Object.values({ improved: 1, worsened: 1, unchanged: 1, unknown: 1 })[0]);
+    assert.ok(['improved', 'worsened', 'unchanged', 'unknown'].includes(entry.outcome));
+  }
 });
 
 test('the scripted engagement shows a later observed price improvement', () => {
@@ -294,7 +327,8 @@ test('period-over-period deltas are reported when a date range is selected', () 
 });
 
 test('data freshness is available on every observation (§26)', () => {
-  const stale = analytics.observations.filter((o) => o.freshness.level === 'stale');
-  const fresh = analytics.observations.filter((o) => o.freshness.level === 'fresh');
+  // The current snapshot is fresh by construction; the buckets are visible across history.
+  const stale = analytics.historical.filter((o) => o.freshness.level === 'stale');
+  const fresh = analytics.historical.filter((o) => o.freshness.level === 'fresh');
   assert.ok(stale.length > 0 && fresh.length > 0, 'dataset spans freshness buckets');
 });

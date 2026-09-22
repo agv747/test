@@ -3,6 +3,7 @@
 import { dateTimeLabel, esc, money } from '../lib/format.js';
 import {
   CONFIDENCE_NOTE,
+  CONFIDENCE_NOT_ACCURACY_NOTE,
   confidenceBar,
   confidenceMeter,
   dataTable,
@@ -44,7 +45,7 @@ export function render(ctx) {
   ];
 
   return `
-    ${disclaimer(`${esc(CONFIDENCE_NOTE)} Low recognition confidence produces a <strong>Review Required</strong> status rather than a price-position judgement, so uncertain data never drives a commercial conclusion.`)}
+    ${disclaimer(`${esc(CONFIDENCE_NOTE)} Low recognition confidence produces a <strong>Review Required</strong> status rather than a price-position judgement, so uncertain data never drives a commercial conclusion. ${esc(CONFIDENCE_NOT_ACCURACY_NOTE)}`)}
     <div class="card">
       <div class="card__head">
         <h2>${rows.length} item${rows.length === 1 ? '' : 's'} in the queue</h2>

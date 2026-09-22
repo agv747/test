@@ -1,0 +1,112 @@
+{
+  "catalogue": [
+    {
+      "id": "TW-A",
+      "code": "TW-A",
+      "name": "Sample A · synthetic pack",
+      "market": "TW",
+      "artworks": [
+        "TW-A-artwork-1",
+        "TW-A-artwork-2"
+      ]
+    },
+    {
+      "id": "TW-B",
+      "code": "TW-B",
+      "name": "Sample B · synthetic pack",
+      "market": "TW",
+      "artworks": [
+        "TW-B-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-C",
+      "code": "TW-C",
+      "name": "Sample C · synthetic pack",
+      "market": "TW",
+      "artworks": [
+        "TW-C-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-D",
+      "code": "TW-D",
+      "name": "Sample D · synthetic pack",
+      "market": "TW",
+      "artworks": [
+        "TW-D-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-E",
+      "code": "TW-E",
+      "name": "Sample E · synthetic pack",
+      "market": "TW",
+      "artworks": [
+        "TW-E-artwork-1"
+      ]
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "F1",
+      "name": "Cabinet F1",
+      "outletId": "tw-outlet-1",
+      "outletName": "Zhongshan · Sample 01",
+      "territory": "Taipei Central",
+      "ownerId": "tw-field-1",
+      "type": "regular_cabinet",
+      "rows": 2,
+      "columns": 10,
+      "active": true
+    },
+    {
+      "id": "F2",
+      "name": "Cabinet F2",
+      "outletId": "tw-outlet-2",
+      "outletName": "Xinyi · Sample 02",
+      "territory": "Taipei Central",
+      "ownerId": "tw-field-1",
+      "type": "regular_cabinet",
+      "rows": 2,
+      "columns": 10,
+      "active": true
+    },
+    {
+      "id": "F3",
+      "name": "Cabinet F3",
+      "outletId": "tw-outlet-3",
+      "outletName": "Da’an · Sample 03",
+      "territory": "Taipei Central",
+      "ownerId": "tw-field-1",
+      "type": "regular_cabinet",
+      "rows": 2,
+      "columns": 10,
+      "active": true
+    },
+    {
+      "id": "F4",
+      "name": "Cabinet F4",
+      "outletId": "tw-outlet-4",
+      "outletName": "Songshan · Sample 04",
+      "territory": "Taipei West",
+      "ownerId": "tw-field-2",
+      "type": "regular_cabinet",
+      "rows": 2,
+      "columns": 10,
+      "active": true
+    },
+    {
+      "id": "F5",
+      "name": "Cabinet F5",
+      "outletId": "tw-outlet-5",
+      "outletName": "Wanhua · Sample 05",
+      "territory": "Taipei West",
+      "ownerId": "tw-field-2",
+      "type": "regular_cabinet",
+      "rows": 2,
+      "columns": 10,
+      "active": true
+    }
+  ]
+}

@@ -168,6 +168,19 @@ const SCRIPTED = {
 /** Pall Mall Red drops SGD 0.50 twenty days ago — the material competitor move (§13). */
 const COMPETITOR_MOVE = { sku_id: 'sku-bat-pallmall-red', from_day: -20, delta: -0.5 };
 
+/**
+ * The pack every demo price refers to.
+ *
+ * Singapore retails cigarettes in packs of 20, and every price in this dataset is a price for
+ * one such pack. Stating it on the record rather than assuming it is what lets the screens
+ * label the unit: a number captioned "SGD" is not a price until you know what it buys, and a
+ * comparison between two pack sizes is not a comparison at all.
+ */
+const DEFAULT_PACK = { sticks_per_pack: 20, pack_type: 'Pack of 20' };
+
+/** The same configuration recorded against an observation, as at the time it was read. */
+const DEFAULT_PACK_SNAPSHOT = { sticks_per_pack_snapshot: 20, pack_type_snapshot: 'Pack of 20' };
+
 function buildSkus() {
   const jti = JTI_SKUS.map((s) => ({
     id: s.id,
@@ -178,6 +191,7 @@ function buildSkus() {
     is_strategic: s.is_strategic,
     strategic_priority: s.strategic_priority,
     tier: s.tier,
+    ...DEFAULT_PACK,
     active: true,
   }));
   const competitor = COMPETITOR_SKUS.map((s) => ({
@@ -189,6 +203,7 @@ function buildSkus() {
     is_strategic: false,
     strategic_priority: null,
     tier: s.tier,
+    ...DEFAULT_PACK,
     active: true,
   }));
   return [...jti, ...competitor];
@@ -481,6 +496,8 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
           recognition_confidence: confidence,
           manual_correction: manuallyCorrected,
           observed_at: observedAt,
+          recorded_at: observedAt,
+          ...DEFAULT_PACK_SNAPSHOT,
           excluded: false,
           exclusion_reason: null,
           image_source: images[images.length - 1].image_source,
@@ -528,6 +545,8 @@ export function buildSeedData(nowIso = new Date().toISOString()) {
           recognition_confidence: round(0.86 + rand() * 0.13, 2),
           manual_correction: false,
           observed_at: observedAt,
+          recorded_at: observedAt,
+          ...DEFAULT_PACK_SNAPSHOT,
           excluded: false,
           exclusion_reason: null,
           image_source: images[images.length - 1].image_source,

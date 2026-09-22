@@ -69,7 +69,7 @@ async function waitForDbGrowth(from, attempts = 12) {
   return (await readDbCounts())?.price_observations ?? from;
 }
 
-const browser = await chromium.launch({ executablePath: CHROMIUM });
+const browser = await chromium.launch({ executablePath: CHROMIUM, args: process.env.CHROMIUM_ARGS ? JSON.parse(process.env.CHROMIUM_ARGS) : [] });
 const page = await browser.newPage({ viewport: { width: 414, height: 896 } });
 page.on('pageerror', (e) => fail(`pageerror: ${e.message}`));
 page.on('console', (m) => {
@@ -88,12 +88,12 @@ try {
   await page.goto(BASE, { waitUntil: 'load' });
   await wait(450);
 
-  // Baseline observation count, read before the field flow starts so that reading it
-  // never navigates away from the wizard.
+  // Baseline, read before the field flow starts so that reading it never navigates away
+  // from the wizard: the whole history, and what the outlet's own page last saw.
   await page.setViewportSize({ width: 1440, height: 950 });
   await page.selectOption('[data-action="switch-user"]', 'usr-mgr-1');
   await wait(450);
-  const before = await observationCount(page);
+  const beforeVisit = await outletHeader(page);
   await page.goto(BASE, { waitUntil: 'load' });
   await wait(400);
   await page.selectOption('[data-action="switch-user"]', 'usr-tme-1');
@@ -134,6 +134,17 @@ try {
   await wait(250);
   check((await page.locator('.thumb').count()) === 1, 'an image can be removed');
 
+  // What is about to read the photo, said BEFORE anything is processed. Simulated and
+  // model-read detections are indistinguishable once they reach the results screen.
+  check((await page.locator('[data-recognition-mode]').count()) === 1, 'the recognition mode is named before processing');
+  const modeBefore = await page.locator('[data-recognition-mode]').innerText();
+  check(/Demo recognition — simulated/.test(modeBefore), 'the simulator is named as simulated');
+  check(/agreed demo content/.test(modeBefore), 'a built-in sample says it returns agreed demo content');
+  check(
+    (await page.getAttribute('[data-recognition-mode]', 'data-recognition-mode')) === 'fixture',
+    'the built-in sample is flagged as fixture content',
+  );
+
   await page.click('[data-action="process"]');
   await wait(250);
   check((await page.locator('.processing__step').count()) > 0, 'staged processing feedback is shown');
@@ -142,6 +153,14 @@ try {
 
   const detections = await page.locator('.detection').count();
   check(detections >= 4, `recognition returned ${detections} detections`);
+
+  // The defect the fixture exists for: the Punggol sample used to come back with Winston Red
+  // but not Pall Mall Red, its own primary mapping, so the comparison screen was blank.
+  const resultsText = await page.locator('.field-app').innerText();
+  check(/Winston Red/.test(resultsText), 'the sample contains its strategic SKU');
+  check(/Pall Mall Red/.test(resultsText), 'and the competitor it is mapped to');
+  check(/14\.20/.test(resultsText) && /13\.50/.test(resultsText), 'at the agreed demo prices');
+  check(/Demo recognition — simulated/.test(resultsText), 'the results still say what read the photo');
   const pills = await page.locator('.detection .pill').evaluateAll((els) => els.map((e) => e.textContent.trim()));
   check(pills.some((p) => /Review Required/.test(p)), 'low-confidence detection is flagged Review Required');
   check(pills.some((p) => /Competitive Position At Risk|Recommended Range/.test(p)), 'price position statuses are shown');
@@ -235,6 +254,26 @@ try {
   check(centred.inViewport, 'the dialog is on screen without scrolling');
   check(centred.offCentre < 40, `the dialog is centred (${Math.round(centred.offCentre)}px off)`);
   await shot('05d-schematic-editor');
+
+  // A price is not a price until you know what it buys: every figure carries its pack.
+  check(/SGD \/ pack of 20/.test(dialogText), 'the price says which pack it is for');
+  check(/not compared/.test(dialogText), 'and that pack configurations are not mixed');
+
+  // Two timestamps, kept apart: when the shelf was seen, and when the reading arrived.
+  check(/Observed at \(shelf\)/.test(dialogText), 'the dialog dates the shelf');
+  check(/Recorded at \(upload\)/.test(dialogText), 'and separately dates the upload');
+
+  // A TME who looks at the shelf and finds the model right must have something to press that
+  // is not "type the same number back in" — that files a verification as a correction.
+  check(
+    (await page.locator('.modal [data-action="confirm-draft"]').count()) === 1,
+    'a reading can be confirmed without being changed',
+  );
+  await page.locator('.modal [data-action="confirm-draft"]').click();
+  await wait(350);
+  const confirmedText = await page.locator('.modal').innerText();
+  check(/Confirmed as read/.test(confirmedText), 'confirming is recorded on the reading');
+  check(!/\bcorrected\b/.test(confirmedText), 'and is not filed as a correction');
 
   // Correcting from the dialog changes the shelf behind it, and the dialog stays open.
   await page.fill('.modal input[data-edit="price"]', '19.95');
@@ -438,8 +477,8 @@ try {
   await page.click('[data-action="toggle-more-nav"]');
   await wait(350);
   const sheetLinks = await page.locator('.more-nav__link').evaluateAll((e) => e.map((x) => x.dataset.nav));
-  check(sheetLinks.length === 12, `every manager destination is listed (${sheetLinks.length})`);
-  for (const route of ['manager/field-effectiveness', 'manager/territories', 'admin/price-rules', 'admin/image-review', 'admin/master-data']) {
+  check(sheetLinks.length === 14, `every manager destination is listed (${sheetLinks.length})`);
+  for (const route of ['manager/field-effectiveness', 'manager/territories', 'admin/price-rules', 'admin/image-review', 'admin/master-data', 'admin/ai']) {
     check(sheetLinks.includes(route), `${route} is reachable on a phone`);
   }
   check((await page.locator('.more-nav__section').count()) === 3, 'the sheet keeps the sidebar grouping');
@@ -450,14 +489,76 @@ try {
   check(/Image Review/.test(await page.locator('.topbar__title h1').textContent()), 'a sheet link navigates');
   check((await page.locator('.more-nav').count()) === 0, 'the sheet closes once a destination is chosen');
 
+  /* ------------------------------------------ a second vendor: Gemini */
+  //
+  // Gemini is a separate account, a separate key and a separate set of failure shapes. What
+  // matters at this level is that choosing it changes what the field screen SAYS is reading
+  // the photo — an audience cannot tell a simulated shelf from a real one by the numbers.
+  console.log('\nGemini as the active model (414×896)');
+
+  await page.goto(`${BASE}#/admin/master-data`, { waitUntil: 'load' });
+  await wait(500);
+  await page.click('[data-action="tab"][data-tab="recognition"]');
+  await wait(400);
+
+  const geminiCard = page.locator('[data-action="pick-model"][data-model="gemini:gemini-3.8-flash"]');
+  check((await geminiCard.count()) === 1, 'Gemini is offered in Admin');
+  const geminiText = await geminiCard.innerText();
+  check(/GEMINI_API_KEY/.test(geminiText), 'and names the Worker secret it needs');
+  // Without a key configured the card must say so — against ITS key, not another vendor's.
+  check(
+    /GEMINI_API_KEY not configured|Your own Google key/.test(geminiText),
+    'and reports on its own key rather than OpenAI\u2019s',
+  );
+
+  await geminiCard.click();
+  await wait(400);
+
+  await page.goto(`${BASE}#/field/check`, { waitUntil: 'load' });
+  await page.reload({ waitUntil: 'load' });
+  await wait(700);
+  await page.fill('#outlet-search', 'SG-E-1042');
+  await wait();
+  await page.locator('.outlet-card').first().click();
+  await wait();
+  await page.setInputFiles('#gallery-input', ['public/demo-images/shelf-punggol-central.jpg']);
+  await wait(700);
+
+  const geminiMode = await page.locator('[data-recognition-mode]').innerText();
+  check(/Real recognition — Google Gemini/.test(geminiMode), 'the field screen names Gemini before processing');
+  // The card does contain the word "simulated" — in the promise NOT to fall back to it — so
+  // the mode is read from the attribute rather than from the prose.
+  check(
+    (await page.getAttribute('[data-recognition-mode]', 'data-recognition-mode')) === 'real',
+    'and flags the mode as real rather than demo content',
+  );
+  check(
+    /rather than falling back/.test(geminiMode),
+    'and says a failure stops the visit rather than substituting invented prices',
+  );
+
+  await page.click('[data-action="process"]');
+  await wait(2200);
+  check((await page.locator('.detection').count()) === 5, 'the Gemini answer reaches the same detection shape');
+  check(
+    !(await page.locator('.field-app').innerText()).includes('Demo recognition'),
+    'and the results are not labelled as demo content',
+  );
+  await shot('17-gemini-active');
+
   /* --------------------------------------------- manager routes (desktop) */
   console.log('\nManager and admin routes (1440×950)');
   await page.setViewportSize({ width: 1440, height: 950 });
   await page.selectOption('[data-action="switch-user"]', 'usr-mgr-1');
   await wait(500);
 
-  const after = await observationCount(page);
-  check(after > before, `submitted visit reached manager analytics (${before} → ${after} observations)`);
+  // The Control Tower now shows the CURRENT picture — one eligible observation per outlet,
+  // SKU and pack — so a fresh visit to an outlet already in it supersedes rather than adds,
+  // and a growing total would mean the repeat-visit weighting is back. The outlet's own page
+  // reads the full history, which is where a new visit must show up.
+  const afterVisit = await outletHeader(page);
+  check(afterVisit !== beforeVisit, 'submitted visit reached manager analytics');
+  check(/shelf-punggol-central\.jpg/.test(afterVisit), 'the outlet page names the image just submitted');
 
   const routes = [
     ['manager/tower', 'Price Control Tower'],
@@ -506,10 +607,164 @@ try {
   check(/P10/.test(skuText) && /P90/.test(skuText) && /Median/.test(skuText), 'percentiles are reported, not just an average');
   await shot('11-sku-intelligence');
 
+  /* ------------------------------------------------ GM Overview (§E) */
+  //
+  // The acceptance test in the brief is physical: at 1366×768 the message, the metrics and the
+  // priorities must be visible without scrolling through a large filter form.
+  console.log('\nGM Overview (1366×768)');
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(`${BASE}/#/manager/overview`, { waitUntil: 'load' });
+  await wait(800);
+
+  check(/GM Overview/.test(await page.locator('.topbar__title h1').textContent()), 'GM Overview has its own route');
+  const scopeText = await page.locator('[data-gm-scope]').innerText();
+  check(/Singapore/.test(scopeText), 'the scope line names the market');
+  check(/pack of 20/.test(scopeText), 'and the price unit');
+  check(/As of /.test(scopeText), 'and the as-of time');
+  check(/Demo data/i.test(scopeText), 'and marks the data as synthetic');
+
+  // A destructive presentation control must not sit beside the numbers a manager is reading.
+  const topbar = await page.locator('.topbar').innerText();
+  check(!/Reset demo/i.test(topbar), 'the reset control is not in the business view');
+  check(/Demo data/i.test(topbar), 'but the top bar still says the dataset is synthetic');
+
+  const metrics = await page.locator('[data-gm-metrics] .kpi').count();
+  check(metrics <= 4, `at most four primary metrics (${metrics})`);
+  const metricText = await page.locator('[data-gm-metrics]').innerText();
+  check(/\d+ of \d+|of \d+ outlets? in scope/.test(metricText), 'every metric carries an interpretable denominator');
+
+  const signalCount = await page.locator('[data-gm-signals] .signal').count();
+  check(signalCount <= 3, `at most three signals (${signalCount})`);
+  const signalText = await page.locator('[data-gm-signals]').innerText();
+  check(/Owner:/.test(signalText), 'each signal names an owner');
+  check(/Next step:/.test(signalText), 'and a next step');
+  check(/Evidence \d+ day|Observed today/.test(signalText), 'and how old the evidence is');
+  check(/\d+ outlets?/.test(signalText), 'and how many outlets it covers');
+
+  // The headline is the group; the outlets live inside it. A single outlet card must never be
+  // captioned with the group's count.
+  check((await page.locator('.signal__outlets').count()) === 0, 'outlets are not listed until asked for');
+  await page.locator('.signal__head').first().click();
+  await wait(400);
+  check((await page.locator('.signal__outlets').count()) === 1, 'a signal opens its outlet list');
+  const listedOutlets = await page.locator('.signal__outlets tbody tr').count();
+  const claimed = Number(
+    (await page.locator('.signal').first().innerText()).match(/(\d+) outlets?/)[1],
+  );
+  check(
+    listedOutlets === claimed,
+    `the outlet count is the outlets listed (${listedOutlets} listed, ${claimed} claimed)`,
+  );
+
+  // Nothing that matters may sit below the fold on a laptop screen. Measured with the drill-down
+  // closed, which is how the page opens: an expanded outlet table is the reader's own choice.
+  await page.locator('.signal__head').first().click();
+  await wait(400);
+  check((await page.locator('.signal__outlets').count()) === 0, 'the outlet list closes again');
+
+  const fold = await page.evaluate(() => {
+    const box = (sel) => document.querySelector(sel)?.getBoundingClientRect() ?? null;
+    return {
+      viewport: window.innerHeight,
+      metricsBottom: box('[data-gm-metrics]')?.bottom ?? null,
+      firstSignalBottom: document.querySelector('.signal')?.getBoundingClientRect().bottom ?? null,
+      filterForms: document.querySelectorAll('.filters').length,
+    };
+  });
+  check(fold.metricsBottom !== null && fold.metricsBottom <= fold.viewport,
+    `the metrics are above the fold (${Math.round(fold.metricsBottom)} of ${fold.viewport}px)`);
+  check(fold.firstSignalBottom !== null && fold.firstSignalBottom <= fold.viewport,
+    `the top priority is above the fold (${Math.round(fold.firstSignalBottom)} of ${fold.viewport}px)`);
+  check(fold.filterForms === 0, 'no large filter form stands between the reader and the message');
+  await shot('16-gm-overview');
+
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await wait(200);
+
+  /* ------------------------- which picture, and whose denominator */
+
+  await page.goto(`${BASE}/#/manager/tower`, { waitUntil: 'load' });
+  await wait(700);
+  check((await page.locator('[data-snapshot-mode]').count()) === 1, 'the Control Tower says which picture it is showing');
+  const snapText = await page.locator('[data-snapshot-mode]').innerText();
+  check(/Current picture/.test(snapText), 'and opens on the current picture');
+  check(/As of /.test(snapText), 'and dates it');
+  check(/freshness window \d+ days/.test(snapText), 'and states the freshness window');
+  check(/Held out|Nothing was held out/.test(snapText), 'and says what it held out');
+
+  // Four coverage questions, each printing the denominator it is a share of. The old single
+  // figure reported 25% for a territory whose every outlet had been visited.
+  const coverageCards = await page.locator('[data-coverage-metric]').count();
+  check(coverageCards === 4, `coverage is reported as four questions, not one (${coverageCards})`);
+  const coverageText = await page.locator('[data-coverage]').innerText();
+  check(/\d+ of \d+/.test(coverageText), 'every coverage figure shows its numerator and denominator');
+  // The card labels are upper-cased by the stylesheet, so match without regard to case.
+  check(/Outlet visit coverage/i.test(coverageText), 'outlet visit coverage is its own metric');
+  check(/Comparable-pair availability/i.test(coverageText), 'so is comparable-pair availability');
+
+  // A pair is two readings of the same shelf, close enough in time. A median of other outlets
+  // in the territory used to be substituted silently and fed straight into the verdict, so an
+  // outlet nobody had read a competitor price in still produced an index and an alignment.
+  await page.locator('.matrix-cell').first().click();
+  await wait(600);
+  const drilldown = await page.locator('.table-wrap').last().innerText();
+  check(/Comparable pair/i.test(drilldown), 'the drill-down says whether a real pair exists');
+  check(
+    /read in the same visit|read in the same outlet|median of/.test(drilldown),
+    'and on what basis the competitor price was paired',
+  );
+  await page.click('[data-action="close-drilldown"]');
+  await wait(400);
+
+  // Filtering to one territory must ask about that territory's own completeness.
+  const networkDenominator = Number(coverageText.match(/(\d+) of (\d+)/)[2]);
+  await page.selectOption('[data-filter="territory_id"]', 'ter-east');
+  await wait(700);
+  const eastText = await page.locator('[data-coverage]').innerText();
+  const eastDenominator = Number(eastText.match(/(\d+) of (\d+)/)[2]);
+  check(
+    eastDenominator < networkDenominator,
+    `a territory's coverage counts that territory's outlets (${eastDenominator} of a network ${networkDenominator})`,
+  );
+  await page.click('[data-action="clear-filters"]');
+  await wait(600);
+
+  // Historical mode returns every reading, and says so.
+  await page.click('[data-action="set-snapshot-mode"][data-mode="historical"]');
+  await wait(700);
+  const histText = await page.locator('[data-snapshot-mode]').innerText();
+  check(/Full history/.test(histText), 'the mode can be switched to the full history');
+  check(/not as a picture of the shelves today/.test(histText), 'and says what it must not be read as');
+  const histTotal = await page.locator('.card__sub', { hasText: 'JTI observations' }).first().innerText();
+  await page.click('[data-action="set-snapshot-mode"][data-mode="current"]');
+  await wait(700);
+  const currentTotal = await page.locator('.card__sub', { hasText: 'JTI observations' }).first().innerText();
+  check(
+    Number.parseInt(histTotal, 10) > Number.parseInt(currentTotal, 10),
+    `the current picture is narrower than the record (${currentTotal.split(' ')[0]} vs ${histTotal.split(' ')[0]})`,
+  );
+  await shot('14-snapshot-and-coverage');
+
   await page.goto(`${BASE}/#/manager/field-effectiveness`, { waitUntil: 'load' });
   await wait(500);
   const fxText = await page.locator('.content').innerText();
-  check(/Observed price change after engagement/i.test(fxText), 'field effectiveness uses observed-sequence wording');
+  check(/Observed sequence after engagement/i.test(fxText), 'field effectiveness uses observed-sequence wording');
+
+  // The 80% headline was four price changes out of five — one of them a price that moved
+  // further from where it was meant to be. Outcomes are now classified, not counted.
+  check((await page.locator('[data-outcomes]').count()) === 1, 'outcomes are classified, not counted');
+  const outcomeText = await page.locator('[data-outcomes]').innerText();
+  for (const outcome of ['Position improved', 'Position unchanged', 'Position worsened']) {
+    check(new RegExp(outcome, 'i').test(outcomeText), `${outcome} is reported separately`);
+  }
+  check(/\d+ of \d+ engagements with a later observation/.test(outcomeText), 'each outcome prints its denominator');
+  check(/not a success rate/.test(outcomeText), 'any observed price change is not presented as a success rate');
+  check(/awaiting one/.test(outcomeText), 'engagements with nothing observed since are counted');
+  check(
+    (await page.locator('[data-awaiting]').count()) === 1,
+    'and are listed rather than dropped from the denominator',
+  );
+  await shot('15-field-outcomes');
   check(/does not attribute/i.test(fxText), 'causal attribution is explicitly disclaimed');
   await shot('12-field-effectiveness');
 
@@ -541,11 +796,16 @@ try {
 
 process.exit(errors.length ? 1 : 0);
 
-/** Reads the observation count the Price Control Tower reports. */
-async function observationCount(p) {
-  await p.goto(`${BASE}/#/manager/tower`, { waitUntil: 'load' });
-  await p.evaluate(() => new Promise((r) => setTimeout(r, 600)));
-  const text = await p.locator('.card__sub', { hasText: 'JTI observations' }).first().textContent();
-  // "855 JTI observations · 76 without a comparable competitor…" — take the leading count only.
-  return Number.parseInt(text.match(/\d+/)[0], 10);
+/**
+ * The Punggol outlet page's header: last visit, and the image that visit carried.
+ *
+ * The Control Tower now shows the CURRENT picture — one eligible observation per outlet, SKU
+ * and pack — so a fresh visit to an outlet already in it supersedes rather than adds, and its
+ * total is deliberately unchanged. The outlet's own page reads the full history, which is
+ * where a newly submitted visit has to appear.
+ */
+async function outletHeader(p) {
+  await p.goto(`${BASE}/#/outlet?id=out-e1`, { waitUntil: 'load' });
+  await p.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+  return p.locator('.grid--kpi').first().innerText();
 }

@@ -59,12 +59,31 @@ export const RANGE_BUCKET_LABELS = {
   [RANGE_BUCKET.UNKNOWN]: 'No Recommendation Available',
 };
 
+/**
+ * The competitive axis, named for what it measures.
+ *
+ * These columns used to read "Competitor cheaper" and "Competitor more expensive", which
+ * describe an absolute comparison. The classification underneath has never been absolute: it
+ * asks whether the price sits inside the corridor configured for that mapping. The two part
+ * company routinely, and the GM review found the case on screen — Camel Blue at 13.20 against
+ * Chesterfield at 13.30 filed under "Competitor cheaper" when Camel is cheaper. Camel is a
+ * value SKU whose mapping intends it to sit 0.70–0.30 BELOW Chesterfield; ten cents below is
+ * above where it is meant to be. A negative gap can still be an above-intended position, and a
+ * column heading that says otherwise teaches the reader the wrong model of the whole screen.
+ */
 export const COMPETITIVE_BUCKET_LABELS = {
-  [COMPETITIVE_BUCKET.JTI_EXPENSIVE]: 'Competitor cheaper',
-  [COMPETITIVE_BUCKET.DESIRED]: 'Desired competitive position',
-  [COMPETITIVE_BUCKET.JTI_CHEAPER]: 'Competitor more expensive',
+  [COMPETITIVE_BUCKET.JTI_EXPENSIVE]: 'Above intended relative position',
+  [COMPETITIVE_BUCKET.DESIRED]: 'Within intended relative position',
+  [COMPETITIVE_BUCKET.JTI_CHEAPER]: 'Below intended relative position',
   [COMPETITIVE_BUCKET.UNKNOWN]: 'No comparable competitor observation',
 };
+
+/** How that position is arrived at, for the note beside the matrix. */
+export const RELATIVE_POSITION_NOTE =
+  'Relative position is measured against the corridor configured for each JTI–competitor ' +
+  'mapping, not against the competitor price directly. A JTI price below its competitor can ' +
+  'still be above its intended position: a value SKU mapped to sit SGD 0.70–0.30 below a ' +
+  'mainstream one is above where it is meant to be at SGD 0.10 below.';
 
 /**
  * §8.8 — position of the confirmed observed price against the recommended range snapshot.

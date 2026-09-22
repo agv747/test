@@ -50,7 +50,8 @@ test('observation export carries the rule snapshot, not the live rule', () => {
   const config = defaultConfig();
   const data = buildSeedData(NOW);
   const analytics = buildAnalytics(data, {}, config, NOW);
-  const strategic = analytics.observations.filter((o) => o.sku_id === 'sku-jti-winston-red');
+  // Older observations are the point of this test, so it reads the history, not the snapshot.
+  const strategic = analytics.historical.filter((o) => o.sku_id === 'sku-jti-winston-red');
   const old = strategic.filter((o) => new Date(o.observed_at) < new Date('2026-07-25T00:00:00Z'));
 
   const rows = old.map((o) => ({
