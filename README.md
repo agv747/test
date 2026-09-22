@@ -27,6 +27,10 @@ No build step. The app is plain ES modules served as static assets by a Cloudfla
 14 September review: what changed and why, what the application still cannot tell you, how each
 change was verified, and the 6–7 minute sequence to run on the day.
 
+**Deploying, or wondering why the live site looks old?**
+[`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md) — credentials, deploy, D1, secrets, how to check
+what is actually live, and the branch trap that catches this repository in particular.
+
 **The application declares no dependencies at all**, so `npm install` fetches nothing and the
 lockfile holds only the root package. That is deliberate: a declared dependency means the
 deploy build runs `npm ci`, and a lockfile that resolves differently on the build machine than
