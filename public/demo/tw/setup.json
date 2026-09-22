@@ -3,8 +3,18 @@
     {
       "id": "TW-A",
       "code": "TW-A",
-      "name": "Sample A · synthetic pack",
+      "sku_code": "TW-A",
+      "name": "Demo product A · synthetic",
       "market": "TW",
+      "brand_id": "demo-brand-1",
+      "brand_name": "Demo brand 1",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
       "artworks": [
         "TW-A-artwork-1",
         "TW-A-artwork-2"
@@ -13,8 +23,18 @@
     {
       "id": "TW-B",
       "code": "TW-B",
-      "name": "Sample B · synthetic pack",
+      "sku_code": "TW-B",
+      "name": "Demo product B · synthetic",
       "market": "TW",
+      "brand_id": "demo-brand-1",
+      "brand_name": "Demo brand 1",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
       "artworks": [
         "TW-B-artwork-1"
       ]
@@ -22,8 +42,18 @@
     {
       "id": "TW-C",
       "code": "TW-C",
-      "name": "Sample C · synthetic pack",
+      "sku_code": "TW-C",
+      "name": "Demo product C · synthetic",
       "market": "TW",
+      "brand_id": "demo-brand-1",
+      "brand_name": "Demo brand 1",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
       "artworks": [
         "TW-C-artwork-1"
       ]
@@ -31,8 +61,18 @@
     {
       "id": "TW-D",
       "code": "TW-D",
-      "name": "Sample D · synthetic pack",
+      "sku_code": "TW-D",
+      "name": "Demo product D · synthetic",
       "market": "TW",
+      "brand_id": "demo-brand-1",
+      "brand_name": "Demo brand 1",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
       "artworks": [
         "TW-D-artwork-1"
       ]
@@ -40,10 +80,210 @@
     {
       "id": "TW-E",
       "code": "TW-E",
-      "name": "Sample E · synthetic pack",
+      "sku_code": "TW-E",
+      "name": "Demo product E · synthetic",
       "market": "TW",
+      "brand_id": "demo-brand-1",
+      "brand_name": "Demo brand 1",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
       "artworks": [
         "TW-E-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-F",
+      "code": "TW-F",
+      "sku_code": "TW-F",
+      "name": "Demo product F · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-2",
+      "brand_name": "Demo brand 2",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-F-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-G",
+      "code": "TW-G",
+      "sku_code": "TW-G",
+      "name": "Demo product G · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-2",
+      "brand_name": "Demo brand 2",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-G-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-H",
+      "code": "TW-H",
+      "sku_code": "TW-H",
+      "name": "Demo product H · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-2",
+      "brand_name": "Demo brand 2",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-H-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-I",
+      "code": "TW-I",
+      "sku_code": "TW-I",
+      "name": "Demo product I · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-2",
+      "brand_name": "Demo brand 2",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-I-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-J",
+      "code": "TW-J",
+      "sku_code": "TW-J",
+      "name": "Demo product J · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-2",
+      "brand_name": "Demo brand 2",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-J-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-K",
+      "code": "TW-K",
+      "sku_code": "TW-K",
+      "name": "Demo product K · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-3",
+      "brand_name": "Demo brand 3",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-K-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-L",
+      "code": "TW-L",
+      "sku_code": "TW-L",
+      "name": "Demo product L · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-3",
+      "brand_name": "Demo brand 3",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-L-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-M",
+      "code": "TW-M",
+      "sku_code": "TW-M",
+      "name": "Demo product M · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-3",
+      "brand_name": "Demo brand 3",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-M-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-N",
+      "code": "TW-N",
+      "sku_code": "TW-N",
+      "name": "Demo product N · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-3",
+      "brand_name": "Demo brand 3",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-N-artwork-1"
+      ]
+    },
+    {
+      "id": "TW-O",
+      "code": "TW-O",
+      "sku_code": "TW-O",
+      "name": "Demo product O · synthetic",
+      "market": "TW",
+      "brand_id": "demo-brand-3",
+      "brand_name": "Demo brand 3",
+      "pack_type": "Synthetic test unit",
+      "units_per_pack": 1,
+      "active": true,
+      "synthetic": true,
+      "source": "synthetic_test_data",
+      "gtin": null,
+      "market_verified": false,
+      "artworks": [
+        "TW-O-artwork-1"
       ]
     }
   ],
