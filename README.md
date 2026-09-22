@@ -1,3 +1,7 @@
+# Taiwan planogram pilot and configurable AI
+
+See [release, setup and executive demo guide](docs/EXECUTION-RELEASE.md). Open `/#/tw/overview` for Taiwan or `/#/admin/ai` to configure providers.
+
 # Retail Price Intelligence — Singapore
 
 Mobile-first field price capture plus a manager-facing price-intelligence decision-support
@@ -15,13 +19,21 @@ application. Built to the v2.0 product specification.
 ```bash
 npm install
 
-npm test        # 220 unit/integration tests (node:test, no browser needed)
+npm test        # 370 unit/integration tests (node:test, no browser needed)
 npm run serve   # plain static server on http://localhost:8787
 npm run dev     # the real Cloudflare Worker runtime (wrangler)
 npm run deploy  # publish to Cloudflare Workers
 ```
 
 No build step. The app is plain ES modules served as static assets by a Cloudflare Worker.
+
+**Preparing the GM demo?** [`docs/GM-DEMO.md`](docs/GM-DEMO.md) is the response to the
+14 September review: what changed and why, what the application still cannot tell you, how each
+change was verified, and the 6–7 minute sequence to run on the day.
+
+**Deploying, or wondering why the live site looks old?**
+[`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md) — credentials, deploy, D1, secrets, how to check
+what is actually live, and the branch trap that catches this repository in particular.
 
 **The application declares no dependencies at all**, so `npm install` fetches nothing and the
 lockfile holds only the root package. That is deliberate: a declared dependency means the
@@ -78,6 +90,20 @@ npx wrangler d1 execute retail-price-intelligence --remote --file=dist/seed.sql
 SMOKE_BASE=http://127.0.0.1:8787 npm run smoke             # smoke against a real Worker + D1
 ```
 
+**After deploying a change that adds a column**, call `POST /api/migrate` once:
+
+```bash
+curl -X POST https://<worker-host>/api/migrate
+```
+
+Seeding creates tables with `CREATE TABLE IF NOT EXISTS`, which does nothing at all to a
+table that already exists — including adding a column declared after it was made. Every
+column added to `shared/schema.js` after the first deploy was therefore missing in the
+deployed database while the code read it back as `undefined`: nothing failed, and the feature
+simply never appeared. `/api/migrate` issues the additive `ALTER TABLE … ADD COLUMN`
+statements instead, treating "duplicate column name" as success, so re-running it is a no-op
+and it never touches data.
+
 ### Deploying
 
 The app deploys as a single Cloudflare Worker serving `public/` as static assets. Validate
@@ -121,11 +147,15 @@ just an asset upload and is safe to repeat.
 3. **Choose from Gallery**, or tap one of the **sample shelf photos** on that screen — the
    recognition simulator works with any image, including a real photo from your device.
 4. Confirm the detected prices, correct one, record a field action, submit.
-5. Switch the user dropdown (top right) to **Commercial Manager** and open the
-   **Price Control Tower**: the visit you just submitted is already in the KPIs, the price
-   position matrix and the opportunity list.
+5. Switch the user dropdown (top right) to **Commercial Manager**. You land on **GM
+   Overview**: the scope, four metrics and the three material signals. **Price Control Tower**
+   has the full analysis, and the visit you just submitted is already in it.
 
-`Reset demo` in the top bar restores the seeded dataset at any time.
+`Reset demo dataset` lives in **Admin → Database**, not in the top bar: it is destructive, and
+a destructive control does not belong at the same size and prominence as the numbers somebody
+is reading. The top bar carries a **Demo data** badge that links to it. Reset never touches
+another user's work — against a database it re-reads, and locally it rewrites this browser's
+own copy.
 
 ---
 
@@ -147,6 +177,10 @@ public/
       competitorMappingService.js
       pricePositionService.js    range status, gap, Price Index, competitive alignment
       opportunityService.js      priority scoring, categories, lifecycle
+      snapshotService.js         current picture vs full history, and what is held out
+      coverageService.js         four coverage questions, each scoped to the selection
+      fieldOutcomeService.js     improved / unchanged / worsened against the intended interval
+      signalService.js           opportunities grouped into GM-level signals
       analyticsService.js        KPIs, matrix, dispersion, moves, field effectiveness
       visitService.js            the field workflow
       imageService.js            acquisition + quality validation
@@ -176,7 +210,7 @@ worker.js                        Worker entry: static assets + /api routes
   source for compliance framing ("violation", "non-compliant", "target price", …) and fails
   the build if any appears.
 - **Every destination is reachable at every width.** Below 860px the sidebar is replaced by a
-  bottom bar, which holds four items; a manager has twelve. The rest reach the phone through
+  bottom bar, which holds four items; a manager has thirteen. The rest reach the phone through
   **More**, a sheet listing all of them under the same section headings. The bar is not
   allowed to be the whole of anyone's navigation, and a smoke check counts the destinations
   at 414px to keep it that way.
@@ -200,7 +234,9 @@ share a scope, a priority and an overlapping date window, because those would be
 | Recommended Price Alignment | `within-range JTI observations / JTI observations with a valid recommendation` |
 | Price Gap | `jti_price − competitor_price` |
 | Price Index | `jti_price / competitor_price × 100` (100 = parity) |
-| Competitive Alignment | gap inside the desired band **or** Price Index inside the desired band (per-mapping `comparison_method` may narrow this to one measure) |
+| Competitive Alignment | gap inside the desired band **or** Price Index inside the desired band (per-mapping `comparison_method` may narrow this to one measure), over **eligible matched pairs only** |
+| Comparable pair | two readings of the same shelf — same visit, or the same outlet within the skew tolerance. A median of other outlets in the territory is context, never a pair |
+| Distance outside an interval | `max(L − x, 0, x − U)` — zero inside the corridor, growing with the shortfall either side. A field outcome improved when this fell, not when the absolute gap got smaller |
 | Price Dispersion | `P90 − P10` (median, P10, P25, P75, P90 and IQR are all reported) |
 | Priority Score | `Strategic + Competitive Severity + Range Severity + Persistence + Outlet Scale + Competitor Move + Unresolved Action − Low Confidence` |
 
@@ -262,23 +298,35 @@ survives a reload.
 | `@cf/meta/llama-4-scout-17b-16e-instruct` | Yes | free allocation, one-time licence acceptance |
 | `openai:gpt-4.1-mini` | Yes | **your own OpenAI key** |
 | `openai:gpt-4o` | Yes | **your own OpenAI key** |
+| `gemini:gemini-3.8-flash` | Yes | **your own Google AI Studio key** |
+| `gemini:gemini-3.7-flash` | Yes | **your own Google AI Studio key** |
 | `@cf/qwen/qwen3.8-27b` | Yes | **paid** — Workers Paid plan or AI Gateway credits |
 | `openai/gpt-4.1-mini` | Yes | **paid** — AI Gateway credits |
 
-**Using your own OpenAI key.** The key is stored as a **Worker secret**, never in the
+**Using your own key.** Each vendor has its own secret, stored on the Worker, never in the
 database and never returned to a browser:
 
 ```bash
-npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OPENAI_API_KEY   # for the openai: models
+npx wrangler secret put GEMINI_API_KEY   # for the gemini: models
 ```
 
 …or Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add → type
-**Secret** → name `OPENAI_API_KEY`. Admin shows only whether it is configured.
+**Secret**. Admin shows only whether each one is configured, and each model card checks for
+the secret **it** needs rather than assuming one vendor.
 
 This application has **no authentication**: anyone with the URL can use it, and therefore
-anyone with the URL can spend against that key. Set a spending limit on the OpenAI side. A
-key accepted through a form and stored in the database would be worse — it could be taken,
-not merely spent.
+anyone with the URL can spend against those keys. Set a spending limit on the OpenAI side and
+a budget on the Google Cloud project behind the Gemini key. A key accepted through a form and
+stored in the database would be worse — it could be taken, not merely spent.
+
+**Gemini specifics.** Create the key in [Google AI Studio](https://aistudio.google.com/apikey),
+which enables the Generative Language API on the project for you; a Cloud service-account
+credential is not the same thing and is rejected. Two of Gemini's failures arrive as HTTP 200
+with no usable text — a safety filter stopping the request, and an answer that ran out of
+output tokens before any of it arrived. Both would otherwise reach the parser as "the model
+read no prices from this image", sending a TME to retake a photograph that was never the
+problem, so each is detected and named instead.
 
 **Licence-gated models.** The Llama models require a one-time acceptance of Meta's Community
 License, sent as the literal prompt `agree`. That acceptance also represents that you are
@@ -290,8 +338,8 @@ restriction, which is why it is the recommended default.
 model against a demo price list through the real `/api/recognise` path and writes the whole
 exchange to a call log — HTTP status, elapsed time, every detection with its matched SKU and
 confidence, and the raw model response. **Deployment configuration** on the same screen
-reports what is actually bound: `env.AI`, `env.DB`, the AI Gateway id, and whether the
-OpenAI key is set.
+reports what is actually bound: `env.AI`, `env.DB`, the AI Gateway id, and whether each
+provider key is set.
 
 Workers AI includes **10,000 Neurons per day at no charge** on both the Free and Paid plans.
 Models marked *free allocation* run inside it; the frontier and third-party models fail with

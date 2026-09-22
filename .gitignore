@@ -3,3 +3,8 @@ node_modules/
 .smoke-screenshots/
 *.tmp.mjs
 dist/
+
+.dev.vars
+.env
+.env.*
+!.env.example

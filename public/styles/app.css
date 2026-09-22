@@ -213,6 +213,11 @@ a { color: var(--info); }
 .kpi__delta--up { color: var(--good); }
 .kpi__delta--down { color: var(--risk); }
 .kpi__delta--flat { color: var(--text-muted); }
+/* Outcome tones. The colour is a second signal only: each card states its own numerator and
+   denominator in words, so nothing here depends on telling green from red. */
+.kpi--good { border-color: var(--good-border); background: var(--good-bg); }
+.kpi--risk { border-color: var(--risk-border); background: var(--risk-bg); }
+.kpi--neutral { border-color: var(--border); }
 
 /* ------------------------------------------------------------------- pills */
 
@@ -744,6 +749,46 @@ textarea { min-height: 74px; resize: vertical; }
 .decision__value { font-size: 1.12rem; font-weight: 680; margin-top: 2px; }
 .decision__note { font-size: 0.8rem; margin-top: 5px; }
 
+/* What is about to read the images, stated before Process is pressed. It borrows the
+   decision card's tones but keeps its own class names: the decision card is the one thing on
+   the screen the TME acts on, and two elements answering to the same selector made "the
+   recommendation" ambiguous to anything reading the page, tests included. */
+.mode-card {
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  border: 1px dashed;
+  margin-bottom: 14px;
+}
+.mode-card--good { background: var(--good-bg); border-color: var(--good-border); }
+.mode-card--watch { background: var(--watch-bg); border-color: var(--watch-border); }
+.mode-card__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; opacity: 0.8; }
+.mode-card__value { font-size: 1rem; font-weight: 680; margin-top: 2px; }
+.mode-card__note { font-size: 0.8rem; margin-top: 5px; }
+
+/* Which picture a manager screen is showing, and what it held out. "68% aligned" reads
+   identically whether it means today's shelves or every reading ever taken. */
+.snapshot {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.snapshot__head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.snapshot__head .toolbar { margin: 0; margin-left: auto; }
+.snapshot__label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; color: var(--text-muted); }
+.snapshot__value { font-size: 1.05rem; font-weight: 680; }
+.snapshot__meta { font-size: 0.82rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.snapshot__note { font-size: 0.78rem; color: var(--text-muted); margin: 6px 0 0; }
+.snapshot__excluded {
+  font-size: 0.78rem;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+.snapshot__pending { font-size: 0.8rem; margin-top: 6px; color: var(--watch); font-weight: 600; }
+
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .summary-grid > div {
   background: var(--surface-2);
@@ -957,4 +1002,51 @@ textarea { min-height: 74px; resize: vertical; }
 @media print {
   .sidebar, .topbar, .mobile-nav, .btn { display: none !important; }
   .content { padding: 0; }
+}
+
+/* ------------------------------------------------------------ GM Overview */
+/*
+ * The first thirty seconds. Four metrics, three signals, one scope line — the acceptance test
+ * is that all of it is visible at 1366×768 without scrolling past a filter form, so the
+ * vertical budget here is deliberate rather than incidental.
+ */
+.gm-scope {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.gm-scope__main { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.85rem; }
+.gm-scope__market { font-weight: 650; }
+.gm-scope__sep { color: var(--text-muted); }
+.gm-scope .toolbar { margin: 0; margin-left: auto; }
+.tag--demo { background: var(--watch-bg); border-color: var(--watch-border); color: var(--watch); font-weight: 650; }
+
+.signal { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 9px; background: var(--surface); }
+.signal--High { border-left: 4px solid var(--risk); }
+.signal--Medium { border-left: 4px solid var(--watch); }
+.signal--Low { border-left: 4px solid var(--border); }
+.signal__head { display: flex; gap: 12px; align-items: flex-start; padding: 11px 13px; cursor: pointer; }
+.signal__head:hover { background: var(--surface-2); }
+.signal__body { flex: 1; min-width: 0; }
+.signal__title { font-weight: 650; font-size: 0.92rem; }
+.signal__scope { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.signal__evidence { font-size: 0.8rem; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.signal__meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-muted); margin-top: 5px; }
+/* Age and overdue carry a word as well as the colour, so neither depends on seeing red. */
+.signal__stale { color: var(--risk); font-weight: 600; }
+.signal__side { text-align: right; display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+.signal__outlets { border-top: 1px solid var(--border); padding: 10px 13px; }
+.signal__outlets table { font-size: 0.78rem; }
+.signal__outlets .toolbar { margin-top: 8px; }
+
+@media (max-width: 720px) {
+  .gm-scope .toolbar { margin-left: 0; width: 100%; }
+  .signal__head { flex-direction: column; }
+  .signal__side { flex-direction: row; align-items: center; text-align: left; }
 }

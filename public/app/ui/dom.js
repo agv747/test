@@ -64,6 +64,21 @@ export const CONFIDENCE_NOTE =
   'Recognition % is how certain the model is that it read both the product name and the price correctly. ' +
   'It says nothing about whether the price itself is good or bad.';
 
+/**
+ * What the number is not.
+ *
+ * A model's own confidence is a self-report, and in the simulator it is not even that — it is
+ * a value the fixture was written with. Either way it is not measured accuracy: a model can be
+ * confidently wrong, and under plain packaging, where two variants differ only by their price
+ * ticket, it routinely is. Establishing real accuracy takes a labelled validation set of local
+ * images, scored against what the pack actually was, with false confidence counted separately.
+ * Until that exists there is no accuracy figure in this application, and this note is why.
+ */
+export const CONFIDENCE_NOT_ACCURACY_NOTE =
+  'This is the model reporting on itself, not measured accuracy. A model can be confidently ' +
+  'wrong. Real accuracy has to be established on a labelled set of local images, with ' +
+  'confidently-wrong readings counted separately.';
+
 export function confidenceTone(confidence, threshold = DEFAULT_CONFIG.confidence_review_threshold) {
   if (confidence === null || confidence === undefined) return 'none';
   if (confidence >= 0.9) return 'good';
@@ -194,6 +209,32 @@ export const MARKET_CONTEXT_NOTE =
 
 export function money2(value, currency = 'SGD') {
   return money(value, currency);
+}
+
+/**
+ * The unit every price in this system is quoted in.
+ *
+ * "SGD 14.20" is not a price until you know what it buys. Two outlets selling the same brand
+ * in different pack configurations produce two numbers that look directly comparable and are
+ * not, and no screen said which pack was meant. So the unit is stated wherever a price is,
+ * and a comparison is only offered within one configuration.
+ */
+export const PACK_UNIT_NOTE =
+  'Every price is for one pack as configured on the SKU. Prices for different pack ' +
+  'configurations are not compared.';
+
+/** "SGD / pack of 20" — the caption a column or figure carries. */
+export function packUnitLabel(sku, currency = 'SGD') {
+  const type = sku?.pack_type ?? sku?.pack_type_snapshot ?? null;
+  const sticks = sku?.sticks_per_pack ?? sku?.sticks_per_pack_snapshot ?? null;
+  if (type) return `${currency} / ${type.toLowerCase()}`;
+  if (Number.isFinite(sticks)) return `${currency} / pack of ${sticks}`;
+  return `${currency} / pack`;
+}
+
+/** The same thing as a small pill, for a detail row or a card header. */
+export function packUnitPill(sku, currency = 'SGD') {
+  return `<span class="tag" title="${esc(PACK_UNIT_NOTE)}">${esc(packUnitLabel(sku, currency))}</span>`;
 }
 
 export function gapCell(gap) {

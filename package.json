@@ -1,12 +1,12 @@
 {
   "name": "retail-price-intelligence-sg",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Retail Price Intelligence — Singapore. Mobile-first field price capture + manager decision-support.",
-  "//": "The application has NO dependencies: it is static ES modules with no build step, and public/ is served as-is. Nothing is declared here on purpose — a declared dependency means the deploy build runs `npm ci`, and a lockfile that resolves differently on the build machine than on the author's then fails the deploy for reasons unrelated to the app. Local tooling (wrangler, playwright, esbuild) is installed on demand with `npm run toolchain`.",
+  "description": "Retail Execution Intelligence \u2014 Singapore pricing and Taiwan planogram audits",
+  "//": "The application has NO dependencies: it is static ES modules with no build step, and public/ is served as-is. Nothing is declared here on purpose \u2014 a declared dependency means the deploy build runs `npm ci`, and a lockfile that resolves differently on the build machine than on the author's then fails the deploy for reasons unrelated to the app. Local tooling (wrangler, playwright, esbuild) is installed on demand with `npm run toolchain`.",
   "scripts": {
-    "build": "echo \"No build step — public/ is served as-is.\"",
+    "build": "echo \"No build step \u2014 public/ is served as-is.\"",
     "toolchain": "npm install --no-save wrangler playwright esbuild",
     "dev": "npx wrangler dev",
     "dev:local": "npx wrangler dev -c wrangler.local.toml",
@@ -16,6 +16,8 @@
     "serve": "node scripts/static-server.js",
     "smoke": "node scripts/smoke.mjs",
     "bundle": "node scripts/bundle-standalone.mjs",
-    "demo-images": "node scripts/make-demo-images.mjs"
+    "demo-images": "node scripts/make-demo-images.mjs",
+    "smoke:execution": "node scripts/smoke-execution.mjs",
+    "demo:tw": "node scripts/make-tw-demo.mjs"
   }
 }

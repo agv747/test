@@ -19,11 +19,13 @@ import {
   strategicPill,
 } from './dom.js';
 import { filterBar, handleFilterAction, handleFilterChange } from './filters.js';
+import { coveragePanel, handleSnapshotAction, snapshotBar } from './snapshotBar.js';
 import {
   COMPETITIVE_BUCKET_LABELS,
   MATRIX_INTERPRETATION,
   RANGE_BUCKET,
   RANGE_BUCKET_LABELS,
+  RELATIVE_POSITION_NOTE,
   COMPETITIVE_BUCKET,
 } from '../services/pricePositionService.js';
 import { dateTimeLabel } from '../lib/format.js';
@@ -41,8 +43,10 @@ export function render(ctx) {
   const a = ctx.analytics;
   return `
     ${disclaimer(esc(MARKET_CONTEXT_NOTE))}
+    ${snapshotBar(a)}
     ${filterBar(ctx)}
     ${kpiRow(a)}
+    ${coveragePanel(a.coverage, a.kpis.delta ?? {})}
     <div class="grid grid--2">
       <div>${matrixCard(a)}</div>
       <div>${topActionsCard(a)}</div>
@@ -67,12 +71,6 @@ function kpiRow(a) {
       delta: k.delta?.strategic_recommended_price_alignment,
     })}
     ${kpiCard({
-      label: 'Competitive Alignment',
-      value: pct(k.competitive_alignment),
-      meta: `${k.competitive_alignment_n} mapped JTI / competitor pairs`,
-      delta: k.delta?.competitive_alignment,
-    })}
-    ${kpiCard({
       label: 'Pricing Opportunities',
       value: String(k.pricing_opportunities),
       meta: `${k.high_priority_opportunities} high priority`,
@@ -86,11 +84,6 @@ function kpiRow(a) {
       label: 'Recent Competitor Moves',
       value: String(k.recent_competitor_moves),
       meta: 'Material competitor price changes in the period',
-    })}
-    ${kpiCard({
-      label: 'Market Coverage',
-      value: pct(k.coverage.coverage_pct),
-      meta: `${k.coverage.observed_outlets} of ${k.coverage.expected_outlets} outlets observed in ${k.coverage.window_days} days`,
     })}
     ${kpiCard({
       label: 'Data Confidence',
@@ -135,7 +128,9 @@ function matrixCard(a) {
     <div class="table-wrap" style="border:0">
       <table class="matrix"><thead>${head}</thead><tbody>${body}</tbody></table>
     </div>
-    <p class="xsmall muted mt">Cell meanings are configurable business interpretations, not fixed judgements. Click any cell to drill into the underlying observations.</p>
+    <p class="xsmall muted mt">${esc(RELATIVE_POSITION_NOTE)}
+      Cell meanings are configurable business interpretations, not fixed judgements. Click any cell to
+      drill into the underlying observations.</p>
   </div>`;
 }
 
@@ -181,7 +176,31 @@ function drilldownCard(a, ctx) {
     { key: 'sku_name', label: 'JTI SKU', render: (o) => `${esc(o.sku_name)} ${strategicPill(o.sku)}` },
     { key: 'competitor_sku_name', label: 'Competitor SKU', render: (o) => esc(o.competitor_sku_name ?? '—') },
     { key: 'confirmed_price', label: 'JTI price', align: 'right', render: (o) => money(o.confirmed_price) },
-    { key: 'competitor_price', label: 'Competitor price', align: 'right', render: (o) => money(o.competitor_price) },
+    {
+      // Both timestamps and the basis, so a "pair" that is a fortnight apart — or a median of
+      // other shops — is visible as what it is rather than as a competitor price.
+      key: 'competitor_price',
+      label: 'Competitor price',
+      align: 'right',
+      render: (o) =>
+        o.competitor_price === null || o.competitor_price === undefined
+          ? '<span class="muted">not observed</span>'
+          : `${money(o.competitor_price)}<br /><span class="xsmall ${o.comparable_pair ? 'muted' : 'signal__stale'}">${esc(
+              o.competitor_basis_label ?? '',
+            )}</span>`,
+      sortValue: (o) => o.competitor_price ?? 0,
+    },
+    {
+      key: 'comparable_pair',
+      label: 'Comparable pair',
+      render: (o) =>
+        !o.competitor_sku_id_snapshot
+          ? '<span class="muted">no mapping</span>'
+          : o.comparable_pair
+            ? `<span class="pill pill--good">Yes</span><br /><span class="xsmall muted">${esc(dateTimeLabel(o.competitor_observed_at))}</span>`
+            : `<span class="pill pill--watch">No</span><br /><span class="xsmall muted">${esc(o.pair_unavailable_reason ?? '')}</span>`,
+      sortValue: (o) => (o.comparable_pair ? 1 : 0),
+    },
     { key: 'gap', label: 'Price gap', align: 'right', render: (o) => gapCell(o.evaluation.gap), sortValue: (o) => o.evaluation.gap },
     {
       key: 'index',
@@ -223,6 +242,7 @@ function drilldownCard(a, ctx) {
 
 export function onAction(action, el, ctx) {
   if (handleFilterAction(action, el, ctx)) return;
+  if (handleSnapshotAction(action, el, ctx)) return;
   switch (action) {
     case 'select-cell':
       selectedCell =

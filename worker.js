@@ -22,12 +22,17 @@ import {
   columnNames,
   ddlStatements,
   fromRow,
+  isDuplicateColumnError,
+  migrationStatements,
   toRow,
   upsertSql,
 } from './shared/schema.js';
 import { buildSeedData } from './public/app/seed.js';
 import { buildModelInput, buildPrompt, parseModelResponse } from './shared/recognition.js';
 import { RECOGNITION_MODELS } from './public/app/config.js';
+import { handleExecution } from './server/execution/api.js';
+import { getActor, sameOrigin } from './server/execution/auth.js';
+import { processDueJobs } from './server/execution/jobs.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -38,6 +43,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname.startsWith('/api/execution/')) return handleExecution(request, env);
+
     if (url.pathname.startsWith('/api/')) {
       try {
         return await handleApi(request, env, url);
@@ -47,20 +54,30 @@ export default {
     }
     return env.ASSETS.fetch(request);
   },
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(processDueJobs(env));
+  },
 };
 
 async function handleApi(request, env, url) {
   // These need the AI binding, not the database.
   if (url.pathname === '/api/recognise' && request.method === 'POST') {
+    const actor = await getActor(request, env);
+    if (!actor || !actor.markets.includes('SG') || actor.role === 'viewer') return json({ error: 'Sign in to use live recognition.' }, 401);
+    sameOrigin(request);
     return recognise(env, request);
   }
   if (url.pathname === '/api/model-licence' && request.method === 'POST') {
+    const actor = await getActor(request, env);
+    if (actor?.role !== 'admin') return json({ error: 'Administrator access required.' }, 403);
+    sameOrigin(request);
     return acceptModelLicence(env, request);
   }
   if (url.pathname === '/api/config' && request.method === 'GET') {
     return json(describeBindings(env));
   }
   if (!env.DB) return json({ error: 'No database binding configured' }, 503);
+  if (['/api/data', '/api/health', '/api/mutations', '/api/seed'].includes(url.pathname)) await ensureSchema(env);
 
   if (url.pathname === '/api/health') {
     return json(await health(env));
@@ -72,10 +89,55 @@ async function handleApi(request, env, url) {
     const body = await request.json();
     return json(await applyMutations(env, body.mutations ?? []));
   }
+  if (url.pathname === '/api/migrate' && request.method === 'POST') {
+    return json(await migrate(env));
+  }
   if (url.pathname === '/api/seed' && request.method === 'POST') {
     return seed(env, request);
   }
   return json({ error: 'Not found' }, 404);
+}
+
+/* --------------------------------------------------------------- migration */
+
+/**
+ * Brings a deployed database up to the current column declaration, without touching data.
+ *
+ * Seeding creates tables with `IF NOT EXISTS`, which does nothing at all to a table that
+ * already exists — so every column added to the descriptor after the first deploy was missing
+ * in production while the code read it back as `undefined`. Nothing failed; the feature was
+ * simply absent. This runs the additive `ALTER`s instead, one at a time, treating "duplicate
+ * column name" as success: it is what an already-migrated database says.
+ *
+ * It is safe to call repeatedly, and adds no data, so it needs no seed token — re-running it
+ * on a live database is a no-op by construction.
+ */
+async function migrate(env) {
+  const ddl = ddlStatements();
+  await env.DB.batch(ddl.filter(sql => sql.startsWith('CREATE TABLE')).map(sql => env.DB.prepare(sql)));
+  const present = new Map();
+  for (const table of TABLE_NAMES) {
+    const { results } = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+    present.set(table, new Set(results.map(c => c.name)));
+  }
+  const missing = migrationStatements().filter(s => !present.get(s.table).has(s.column));
+  for (const statement of missing) {
+    try { await env.DB.prepare(statement.sql).run(); }
+    catch (err) { if (!isDuplicateColumnError(err)) throw err; }
+  }
+  await env.DB.batch(ddl.filter(sql => sql.startsWith('CREATE INDEX')).map(sql => env.DB.prepare(sql)));
+  return { ok: true, added: missing.map(s => `${s.table}.${s.column}`), already_present: migrationStatements().length - missing.length, failed: [] };
+}
+
+const schemaReady = new WeakMap();
+async function ensureSchema(env) {
+  if (!schemaReady.has(env.DB)) schemaReady.set(env.DB, (async () => {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS rei_schema_migrations (version TEXT PRIMARY KEY,applied_at TEXT NOT NULL)').run();
+    if (await env.DB.prepare('SELECT version FROM rei_schema_migrations WHERE version=?').bind('execution-v1').first()) return;
+    await migrate(env);
+    await env.DB.prepare('INSERT OR IGNORE INTO rei_schema_migrations(version,applied_at) VALUES(?,?)').bind('execution-v1', new Date().toISOString()).run();
+  })().catch(e => { schemaReady.delete(env.DB); throw e; }));
+  await schemaReady.get(env.DB);
 }
 
 /* ------------------------------------------------------------- recognition */
@@ -94,9 +156,11 @@ async function recognise(env, request) {
   const body = await request.json();
   const { image, model, skus = [], currency = 'SGD' } = body ?? {};
 
-  // OpenAI models are called directly and need only the key; the rest need the AI binding.
+  // A model called directly against the account's own key needs only that key. Everything
+  // else goes through Workers AI and needs the binding.
   const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
-  if (descriptor?.kind !== 'openai' && !env.AI) {
+  const direct = descriptor?.kind === 'openai' || descriptor?.kind === 'gemini';
+  if (!direct && !env.AI) {
     return json(
       {
         error: 'No AI binding configured',
@@ -142,6 +206,7 @@ async function runModel(env, model, prompt, base64) {
   const descriptor = RECOGNITION_MODELS.find((m) => m.id === model);
 
   if (descriptor?.kind === 'openai') return callOpenAI(env, descriptor, prompt, base64);
+  if (descriptor?.kind === 'gemini') return callGemini(env, descriptor, prompt, base64);
 
   const shape = descriptor?.input ?? (model.startsWith('@cf/') ? 'image_url' : 'messages');
   const input = buildModelInput(shape, prompt, base64);
@@ -199,6 +264,87 @@ export async function callOpenAI(env, descriptor, prompt, base64) {
   return body;
 }
 
+/**
+ * Calls Google's Gemini API directly with the account's own key.
+ *
+ * Same custody rule as the OpenAI key: it lives in the Worker's secret store and is read
+ * here only. It is never written to the database, never returned by any endpoint and never
+ * reaches the browser — this application has no authentication, so a key it could hand out
+ * would be a key anyone with the URL could take.
+ *
+ * A JSON response type is requested, so the parser is not left stripping prose. Temperature
+ * is pinned to zero: reading a price off a ticket is transcription, and there is nothing for
+ * sampling to improve.
+ */
+export async function callGemini(env, descriptor, prompt, base64) {
+  if (!env.GEMINI_API_KEY) {
+    throw new Error(
+      'GEMINI_API_KEY is not configured. Add it as a Worker secret (Cloudflare dashboard → the Worker → Settings → Variables and Secrets → Add, type Secret).',
+    );
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${descriptor.api_model}:generateContent`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      // The key goes in a header rather than the query string, so it cannot end up in a
+      // proxy or gateway access log alongside the URL.
+      'x-goog-api-key': env.GEMINI_API_KEY,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0,
+        maxOutputTokens: 4096,
+      },
+    }),
+  });
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = body?.error?.message ?? `HTTP ${response.status}`;
+    const status = body?.error?.status ? ` (${body.error.status})` : '';
+    throw new Error(`Gemini: ${detail}${status}`);
+  }
+
+  /**
+   * A 200 with no text is a real outcome here, not an edge case.
+   *
+   * Gemini answers 200 and returns no candidate when a safety filter stops the request, and
+   * a candidate with no parts when it runs out of output tokens mid-answer. Both would reach
+   * the parser as "the model read nothing from this image", which sends a TME to retake a
+   * photograph that was never the problem. Each is named instead.
+   */
+  const blocked = body?.promptFeedback?.blockReason;
+  if (blocked) {
+    throw new Error(
+      `Gemini: the request was blocked by a safety filter (${blocked}). This is a property of the filter, not of the photograph — retaking it will not help. Use another model for this image.`,
+    );
+  }
+
+  const candidate = body?.candidates?.[0];
+  const finish = candidate?.finishReason;
+  if (finish && finish !== 'STOP' && !candidate?.content?.parts?.length) {
+    throw new Error(
+      finish === 'MAX_TOKENS'
+        ? 'Gemini: the answer was cut off before any of it arrived (MAX_TOKENS). Photograph fewer products at once, or use a model with a larger output budget.'
+        : `Gemini: the model stopped without answering (${finish}).`,
+    );
+  }
+
+  return body;
+}
+
 /** What is actually wired up, so Admin can show it instead of guessing. */
 function describeBindings(env) {
   return {
@@ -206,8 +352,18 @@ function describeBindings(env) {
     db_binding: Boolean(env.DB),
     ai_gateway_id: env.AI_GATEWAY_ID || 'default',
     seed_token_configured: Boolean(env.SEED_TOKEN),
-    // Presence only. The value is never returned by any endpoint.
+    // Presence only. No value is ever returned by any endpoint.
     openai_key_configured: Boolean(env.OPENAI_API_KEY),
+    gemini_key_configured: Boolean(env.GEMINI_API_KEY),
+    /**
+     * The same facts keyed by secret name, so Admin can ask "is the secret this model needs
+     * present" instead of carrying a branch per provider — which is how the OpenAI-only check
+     * came to report a missing key against every bring-your-own-key model.
+     */
+    secrets: {
+      OPENAI_API_KEY: Boolean(env.OPENAI_API_KEY),
+      GEMINI_API_KEY: Boolean(env.GEMINI_API_KEY),
+    },
     models: RECOGNITION_MODELS.filter((m) => m.reads_image).map((m) => ({
       id: m.id,
       label: m.label,
@@ -258,7 +414,33 @@ async function acceptModelLicence(env, request) {
 export function explainModelFailure(err, model) {
   const message = String(err?.message ?? err ?? '');
 
-  if (/OPENAI_API_KEY is not configured/i.test(message)) {
+  if (/(OPENAI|GEMINI)_API_KEY is not configured/i.test(message)) {
+    return message;
+  }
+
+  /**
+   * Gemini's failures are checked before OpenAI's, because several of the strings overlap
+   * ("429", "403") and the first matching branch wins. A Gemini error always says "Gemini:".
+   */
+  if (/^Gemini: the request was blocked|^Gemini: the answer was cut off|^Gemini: the model stopped/i.test(message)) {
+    return message;
+  }
+  if (/^Gemini:/i.test(message)) {
+    if (/API_KEY_INVALID|API key not valid/i.test(message)) {
+      return `The Google API key was rejected. Check the GEMINI_API_KEY secret on the Worker — it must be a live key from Google AI Studio, not a Google Cloud service-account credential.`;
+    }
+    if (/PERMISSION_DENIED|SERVICE_DISABLED|has not been used in project/i.test(message)) {
+      return `The Google account has the key but not access to ${model}. Enable the Generative Language API for that project, or generate the key from Google AI Studio, which enables it for you.`;
+    }
+    if (/RESOURCE_EXHAUSTED|quota|\b429\b/i.test(message)) {
+      return `The Google AI Studio quota is spent for now. Free-tier keys are rate-limited per minute and per day; wait and retry, add billing to the project, or switch to a model marked "Free daily allocation" in Admin → Recognition provider.`;
+    }
+    if (/NOT_FOUND|is not found for API version|not supported for generateContent/i.test(message)) {
+      return `${model} is not available on this Google account or API version. Google's model names change between generations; try Gemini 3.7 Flash, or another provider in Admin → Recognition provider.`;
+    }
+    if (/\b400\b|INVALID_ARGUMENT/i.test(message)) {
+      return `Gemini rejected the request. Most often the image is too large — the whole request must stay under 20 MB — so retake the photo or use a smaller one. Original error: ${message}`;
+    }
     return message;
   }
   if (/openai:.*(invalid_api_key|incorrect api key|401)/i.test(message)) {
@@ -294,6 +476,15 @@ export function explainModelFailure(err, model) {
 /** Vision models differ in where they put the answer; take the first shape that has text. */
 function extractText(raw) {
   if (typeof raw === 'string') return raw;
+
+  // Gemini splits a long answer across several parts, so they are joined rather than taking
+  // the first — a truncated JSON object parses as nothing at all.
+  const geminiParts = raw?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(geminiParts) && geminiParts.length) {
+    const text = geminiParts.map((part) => part?.text ?? '').join('');
+    if (text.trim()) return text;
+  }
+
   return (
     raw?.response ??
     raw?.result?.response ??
@@ -360,7 +551,8 @@ async function health(env) {
  */
 async function seed(env, request) {
   const current = await health(env);
-  const populated = current.ok && current.seeded;
+  if (!current.ok) return json({ error: 'Database health check failed; seeding is blocked to protect existing data' }, 503);
+  const populated = current.seeded;
 
   if (populated) {
     const token = request.headers.get('x-seed-token');
@@ -378,9 +570,9 @@ async function seed(env, request) {
 
   const data = buildSeedData(new Date().toISOString());
 
-  for (const statement of ddlStatements()) {
-    await env.DB.prepare(statement).run();
-  }
+  // Creates any missing table AND adds any column declared since the tables were first made;
+  // `CREATE TABLE IF NOT EXISTS` alone leaves an existing table on its original columns.
+  await migrate(env);
 
   let written = 0;
   for (const table of TABLE_NAMES) {

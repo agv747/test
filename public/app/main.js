@@ -19,6 +19,7 @@ import * as priceCheck from './ui/priceCheck.js';
 import * as myVisits from './ui/myVisits.js';
 import * as outletsPage from './ui/outlets.js';
 import * as outletDetail from './ui/outletDetail.js';
+import * as gmOverview from './ui/gmOverview.js';
 import * as controlTower from './ui/controlTower.js';
 import * as opportunities from './ui/opportunities.js';
 import * as skuIntelligence from './ui/skuIntelligence.js';
@@ -30,11 +31,15 @@ import * as priceRules from './ui/priceRules.js';
 import * as competitorMapping from './ui/competitorMapping.js';
 import * as imageReview from './ui/imageReview.js';
 import * as admin from './ui/admin.js';
+import * as executionPage from './execution/ui.js';
+import { initExecution, getExecution } from './execution/client.js';
+import { configuredSingaporeProvider } from './execution/sg-provider.js';
 
 // Every configured model becomes a provider; the simulator stays the default so a fresh
 // install never spends money without someone choosing to.
 registerProvider(mockRecognitionProvider);
 registerRemoteProviders(RECOGNITION_MODELS);
+registerProvider(configuredSingaporeProvider);
 setActiveProvider(DEFAULT_RECOGNITION_MODEL);
 
 const ROUTES = {
@@ -43,6 +48,7 @@ const ROUTES = {
   'field/visits': myVisits,
   'field/outlets': outletsPage,
   'outlet': outletDetail,
+  'manager/overview': gmOverview,
   'manager/tower': controlTower,
   'manager/opportunities': opportunities,
   'manager/sku': skuIntelligence,
@@ -55,6 +61,13 @@ const ROUTES = {
   'admin/competitor-mapping': competitorMapping,
   'admin/image-review': imageReview,
   'admin/master-data': admin,
+  'tw/overview': executionPage,
+  'tw/audits/new': executionPage,
+  'tw/audits/detail': executionPage,
+  'tw/planograms': executionPage,
+  'tw/planograms/detail': executionPage,
+  'tw/issues': executionPage,
+  'admin/ai': executionPage,
 };
 
 const FIELD_NAV = [
@@ -66,6 +79,7 @@ const FIELD_NAV = [
 
 const MANAGER_NAV = [
   { section: 'Intelligence' },
+  { route: 'manager/overview', label: 'GM Overview', icon: '★' },
   { route: 'manager/tower', label: 'Price Control Tower', icon: '◎' },
   { route: 'manager/opportunities', label: 'Pricing Opportunities', icon: '◈' },
   { route: 'manager/sku', label: 'SKU Intelligence', icon: '▤' },
@@ -80,7 +94,20 @@ const MANAGER_NAV = [
   { route: 'admin/competitor-mapping', label: 'Competitor Mapping', icon: '⇌' },
   { route: 'admin/image-review', label: 'Image Review', icon: '⌗' },
   { route: 'admin/master-data', label: 'Admin / Master Data', icon: '⚙' },
+  { route: 'admin/ai', label: 'AI Models & Connections', icon: '✦' },
 ];
+
+const TAIWAN_NAV = [
+  { section: 'Retail execution' },
+  { route: 'tw/overview', label: 'Execution Overview', icon: '◎' },
+  { route: 'tw/audits/new', label: 'Start Cabinet Audit', icon: '▣' },
+  { route: 'tw/issues', label: 'Execution Issues', icon: '⇄' },
+  { section: 'Reference & AI' },
+  { route: 'tw/planograms', label: 'Planogram Library', icon: '▦' },
+  { route: 'admin/ai', label: 'AI Models & Connections', icon: '✦' },
+];
+const isTaiwan = ctx => ctx.path.startsWith('tw/') || (ctx.path === 'admin/ai' && store.getSession().market === 'TW');
+const navigation = ctx => isTaiwan(ctx) ? TAIWAN_NAV : ctx.user.role === 'field' ? FIELD_NAV : MANAGER_NAV;
 
 /* --------------------------------------------------------------- routing */
 
@@ -91,11 +118,22 @@ export function parseHash() {
   return { path: path || defaultRoute(), params };
 }
 
+/**
+ * Where a manager lands.
+ *
+ * The GM Overview, not the Control Tower. The Tower opens with a nine-field filter form, eight
+ * KPI cards and a paragraph of disclaimer before the first conclusion, which is the right
+ * arrangement for someone who lives in the screen and the wrong one for someone arriving at it.
+ * The Tower is one click away and keeps everything.
+ */
 function defaultRoute() {
-  return store.currentUser()?.role === 'field' ? 'field/home' : 'manager/tower';
+  if (store.getSession().market === 'TW') return 'tw/overview';
+  return store.currentUser()?.role === 'field' ? 'field/home' : 'manager/overview';
 }
 
 export function navigate(path, params = {}) {
+  if (path.startsWith('tw/')) store.setSession({ market: 'TW' });
+  else if (path.startsWith('field/') || path.startsWith('manager/')) store.setSession({ market: 'SG' });
   const query = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
   ).toString();
@@ -168,7 +206,7 @@ function buildContext() {
 }
 
 function navHtml(ctx) {
-  const items = ctx.user.role === 'field' ? FIELD_NAV : MANAGER_NAV;
+  const items = navigation(ctx);
   return items
     .map((item) => {
       if (item.section) return `<div class="sidebar__section">${esc(item.section)}</div>`;
@@ -191,8 +229,8 @@ let moreOpen = false;
  * anyone on a phone, because the bar was the whole of their navigation.
  */
 function mobileNavHtml(ctx) {
-  const isField = ctx.user.role === 'field';
-  const destinations = (isField ? FIELD_NAV : MANAGER_NAV).filter((i) => !i.section);
+  const isField = ctx.user.role === 'field' && !isTaiwan(ctx);
+  const destinations = navigation(ctx).filter((i) => !i.section);
   const shown = isField ? destinations : destinations.slice(0, 4);
   const hidden = destinations.length - shown.length;
 
@@ -211,8 +249,8 @@ function mobileNavHtml(ctx) {
 
 /** Every destination, as a sheet over the page, so nothing is unreachable on a phone. */
 function moreNavSheet(ctx) {
-  if (!moreOpen || ctx.user.role === 'field') return '';
-  const items = MANAGER_NAV.map((item) => {
+  if (!moreOpen || (ctx.user.role === 'field' && !isTaiwan(ctx))) return '';
+  const items = navigation(ctx).map((item) => {
     if (item.section) return `<div class="more-nav__section">${esc(item.section)}</div>`;
     const active = ctx.path === item.route || (item.route === 'manager/outlets' && ctx.path === 'outlet');
     return `<button class="more-nav__link${active ? ' is-active' : ''}" data-nav="${esc(item.route)}">
@@ -243,6 +281,21 @@ function sourceIndicator() {
   return source === 'database'
     ? '<span class="pill pill--good" title="Observations are read from and written to the shared database">✓ Shared database</span>'
     : '<span class="pill pill--watch" title="No database reachable — this browser only, changes are not shared">! Local demo data</span>';
+}
+
+/**
+ * Marks the dataset as synthetic, and puts the presentation controls where they belong.
+ *
+ * "Reset demo" used to sit in the top bar of every business screen, one click from the numbers
+ * a manager is reading — a destructive control at the same size and prominence as the work. It
+ * lives in Admin now, beside its warning, and this badge says what the data is and points at it.
+ * The persona switcher stays: the demo script moves between a TME and a manager, and hiding
+ * that would make the story harder to follow rather than safer.
+ */
+function demoBadge() {
+  return `<button class="pill pill--info" data-nav="admin/master-data"
+    title="Synthetic demonstration dataset. Reset and other presentation controls are in Admin."
+    style="cursor:pointer;border-style:solid">Demo data</button>`;
 }
 
 function roleSwitcher(ctx) {
@@ -279,12 +332,12 @@ export function render() {
     <div class="app">
       <nav class="sidebar">
         <div class="sidebar__brand">
-          <strong>Retail Price Intelligence</strong>
-          <span>Singapore · SGD</span>
+          <strong>Retail Execution Intelligence</strong>
+          <span>${isTaiwan(ctx) ? 'Taiwan · Planogram verification' : 'Singapore · Price intelligence'}</span>
         </div>
         ${navHtml(ctx)}
         <div class="sidebar__footer">
-          Outlets set their own retail price. This tool observes and prioritises — it does not enforce.
+          ${isTaiwan(ctx) ? 'Approved reference. Visible evidence. A verified action loop.' : 'Outlets set their own retail price. This tool observes and prioritises — it does not enforce.'}
         </div>
       </nav>
       <div class="main">
@@ -293,9 +346,8 @@ export function render() {
             <h1>${esc(page.title(ctx))}</h1>
             <small>${page.subtitle ? esc(page.subtitle(ctx)) : ''}</small>
           </div>
-          ${sourceIndicator()}
-          ${roleSwitcher(ctx)}
-          <button class="btn btn--sm" data-action="reset-demo" title="Restore the demo dataset">Reset demo</button>
+          <select data-action="switch-market" aria-label="Market" style="width:auto"><option value="SG"${isTaiwan(ctx) ? '' : ' selected'}>Singapore · Prices</option><option value="TW"${isTaiwan(ctx) ? ' selected' : ''}>Taiwan · Planograms</option></select>
+          ${isTaiwan(ctx) || ctx.path === 'admin/ai' ? `<span class="pill pill--info">${getExecution().mode === 'shared' ? esc(getExecution().actor?.name ?? 'Private workspace') : 'Demo workspace'}</span>` : `${sourceIndicator()}${demoBadge()}${roleSwitcher(ctx)}`}
         </header>
         <main class="content${page.narrow ? ' content--narrow' : ''}">${body}</main>
         <nav class="mobile-nav">${mobileNavHtml(ctx)}</nav>
@@ -328,10 +380,12 @@ function delegate(root) {
 
     if (action.dataset.action === 'reset-demo') {
       const { source } = store.dataSource();
+      // Neither branch touches another person's work: against a database this re-reads it,
+      // and locally it rewrites this browser's own copy only.
       const message =
         source === 'database'
-          ? 'Discard local settings and reload the shared dataset from the database?'
-          : 'Reset all demo data back to the seeded dataset?';
+          ? 'Discard this browser\u2019s local settings and reload the shared dataset from the database? Nothing stored in the database is changed.'
+          : 'Reset this browser\u2019s demo data back to the seeded dataset? No other user is affected.';
       if (confirm(message)) {
         store.reload().then(render);
       }
@@ -342,10 +396,16 @@ function delegate(root) {
 
   root.addEventListener('change', (event) => {
     const target = event.target;
+    if (target.dataset.action === 'switch-market') {
+      store.setSession({ market: target.value });
+      navigate(target.value === 'TW' ? 'tw/overview' : defaultRoute());
+      render();
+      return;
+    }
     if (target.dataset.action === 'switch-user') {
       const user = store.getData().users.find((u) => u.id === target.value);
       store.setSession({ user_id: user.id, role: user.role });
-      navigate(user.role === 'field' ? 'field/home' : 'manager/tower');
+      navigate(user.role === 'field' ? 'field/home' : 'manager/overview');
       render();
       return;
     }
@@ -380,9 +440,11 @@ export async function start() {
   // The dataset is loaded once, before the first render, so every page and service can keep
   // reading it synchronously.
   await store.init();
+  await initExecution();
 
   // The chosen model lives in configuration, so it survives a reload.
-  const chosen = store.getConfig().recognition_model ?? DEFAULT_RECOGNITION_MODEL;
+  const chosen = getExecution().actor && getExecution().ai?.routes.some(r => r.task === 'sg_price_recognition')
+    ? 'configured-sg' : store.getConfig().recognition_model ?? DEFAULT_RECOGNITION_MODEL;
   try {
     setActiveProvider(chosen);
   } catch {

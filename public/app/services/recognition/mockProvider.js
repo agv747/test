@@ -5,6 +5,11 @@
  * including real shelf photos) by seeding a PRNG from the image identity, so the same
  * photo always yields the same result and demos are reproducible.
  *
+ * The three built-in sample photos are not generated at all: each returns the agreed fixture
+ * in `demoImages.js`. Generated content is a plausible mix, which is not the same as a
+ * coherent one — the Punggol sample used to come back with Winston Red but not Pall Mall Red,
+ * its own mapped competitor, so the screen built to compare them had nothing to compare.
+ *
  * The generated mix always contains the situations the demo script needs (§30):
  * one Within Recommended Range, one Above Recommended Range, one Competitive Position
  * At Risk and one low-confidence Review Required detection.
@@ -16,6 +21,7 @@
 import { rngFor } from '../../lib/rng.js';
 import { round } from '../../lib/stats.js';
 import { resolveEffectivePriceRule } from '../priceRuleService.js';
+import { demoFixtureFor } from '../../demoImages.js';
 
 /**
  * How many packs of a product stand side by side, and on which shelf.
@@ -61,7 +67,8 @@ export const mockRecognitionProvider = {
   /** This provider never looks at the image; the UI states that plainly. */
   reads_image: false,
   description:
-    'Generates plausible detections from the SKU catalogue and price rules without looking at the image.',
+    'Returns the agreed fixture for a built-in sample photo; for any other image it generates ' +
+    'plausible detections from the SKU catalogue and price rules without looking at the image.',
   cost: 'Free',
 
   /**
@@ -79,6 +86,12 @@ export const mockRecognitionProvider = {
       observedAt,
       market = 'SG',
     } = context;
+
+    // A built-in sample returns its agreed fixture rather than a seed-rotated invention, so
+    // the demo shows the same shelf every time and always contains the mapped competitor the
+    // comparison screens need. A photo the TME supplied has no fixture and falls through.
+    const fixed = fixtureDetections(image, [...jtiSkus, ...competitorSkus]);
+    if (fixed) return fixed;
 
     const seedKey = `${image.id || image.name}|${image.size || 0}|${outlet?.id || 'no-outlet'}`;
     const rand = rngFor(seedKey);
@@ -187,6 +200,49 @@ export const mockRecognitionProvider = {
     return detections;
   },
 };
+
+/**
+ * The agreed detections for a built-in sample image, resolved against the live catalogue.
+ *
+ * A fixture names SKUs by id. If the catalogue has been edited so that an id no longer
+ * exists, that entry is dropped rather than invented; if nothing at all resolves, null is
+ * returned and the generative path runs, so a customised catalogue still demos.
+ */
+export function fixtureDetections(image, skus = []) {
+  const fixture = demoFixtureFor(image);
+  if (!fixture) return null;
+
+  const byId = new Map(skus.map((s) => [s.id, s]));
+  const detections = [];
+
+  for (const entry of fixture.detections) {
+    const sku = byId.get(entry.sku_id);
+    if (!sku) continue;
+    const price = round(entry.price, 2);
+    detections.push({
+      raw_text: entry.raw_text ?? `${sku.name.toUpperCase()}  $${price.toFixed(2)}`,
+      brand_candidate: sku.brand_name ?? null,
+      sku_candidate: sku.id,
+      price_candidate: price,
+      confidence: entry.confidence,
+      alternatives: (entry.alternatives ?? [])
+        .filter((alt) => byId.has(alt.sku_id))
+        .map((alt) => ({
+          sku_id: alt.sku_id,
+          label: byId.get(alt.sku_id).name,
+          confidence: alt.probability,
+        })),
+      detected_is_jti: Boolean(sku.is_jti),
+      ticket_colour: entry.ticket ?? null,
+      shelf: entry.shelf ?? 1,
+      facings: entry.facings ?? 1,
+      /** Marks the reading as agreed demo content rather than anything read off the photo. */
+      fixture: true,
+    });
+  }
+
+  return detections.length ? detections : null;
+}
 
 function alternativesFor(pool, sku, rand) {
   return pool

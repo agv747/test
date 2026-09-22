@@ -20,6 +20,8 @@ import { shelfSchematic } from '../public/app/ui/shelfSchematic.js';
 import { flagVariantConflicts } from '../public/app/services/visitService.js';
 import { DEFAULT_CONFIG } from '../public/app/config.js';
 
+const AUTH_TOKEN = 'test_only_access_token_000000000000000000000000';
+
 const SKUS = [
   { id: 'sku-jti-mevius-original', name: 'Mevius Original', brand_name: 'Mevius', sku_code: 'MEV-ORG', is_jti: true },
   { id: 'sku-jti-mevius-sky', name: 'Mevius Sky Blue', brand_name: 'Mevius', sku_code: 'MEV-SKY', is_jti: true },
@@ -57,7 +59,7 @@ async function recognise(answer) {
     const response = await worker.fetch(
       new Request('https://example.test/api/recognise', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', cookie: `rei_session=${AUTH_TOKEN}` },
         body: JSON.stringify({
           image: 'data:image/jpeg;base64,QUJD',
           model: 'openai:gpt-4o',
@@ -65,7 +67,7 @@ async function recognise(answer) {
           currency: 'SGD',
         }),
       }),
-      { OPENAI_API_KEY: 'sk-test' },
+      { OPENAI_API_KEY: 'sk-test', ADMIN_ACCESS_TOKEN: AUTH_TOKEN },
     );
     return { response, body: await response.json(), sent: stub.calls[0] };
   } finally {
@@ -173,10 +175,10 @@ test('an unreadable answer fails visibly rather than drawing an empty shelf', as
     const response = await worker.fetch(
       new Request('https://example.test/api/recognise', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', cookie: `rei_session=${AUTH_TOKEN}` },
         body: JSON.stringify({ image: 'x', model: 'openai:gpt-4o', skus: SKUS }),
       }),
-      { OPENAI_API_KEY: 'sk-test' },
+      { OPENAI_API_KEY: 'sk-test', ADMIN_ACCESS_TOKEN: AUTH_TOKEN },
     );
     const body = await response.json();
     assert.deepEqual(body.detections, []);
@@ -266,4 +268,9 @@ test('the ticket colour reaches the shelf drawing', async () => {
   const { html } = drawShelf(body.detections);
   assert.match(html, /class="swatch"/);
   assert.match(html, /title="green price ticket"/);
+});
+
+test('unauthenticated callers cannot spend credentials through legacy recognition', async () => {
+  const response = await worker.fetch(new Request('https://example.test/api/recognise', { method: 'POST', body: '{}' }), { OPENAI_API_KEY: 'sk-test', ADMIN_ACCESS_TOKEN: AUTH_TOKEN });
+  assert.equal(response.status, 401);
 });
