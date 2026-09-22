@@ -1,3 +1,4 @@
+import { upgradeDemoCatalogue } from './catalogue.js';
 import { applyCommand, clone, DomainError } from './domain.js';
 import { buildTaiwanDemo, DEMO_TIME, DEMO_ACTOR } from './demo.js';
 const DEMO_KEY = 'rei.tw.demo.v1', MODE_KEY = 'rei.workspace.mode';
@@ -10,7 +11,7 @@ export async function api(path, body, method = body === undefined ? 'GET' : 'POS
   return data;
 }
 function loadDemo() {
-  try { const saved = JSON.parse(localStorage.getItem(DEMO_KEY)); if (saved?.schemaVersion === 1 && saved?.demo) return saved; } catch { /* recover a malformed local demo */ }
+  try { const saved = JSON.parse(localStorage.getItem(DEMO_KEY)); if (saved?.schemaVersion === 1 && saved?.demo) return upgradeDemoCatalogue(saved); } catch { /* recover a malformed local demo */ }
   return buildTaiwanDemo();
 }
 export async function initExecution() {

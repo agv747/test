@@ -1,4 +1,36 @@
 /* Taiwan and AI extension. Scoped styles preserve the existing Singapore views. */
+.rei--demo { max-width:1240px; }
+.rei--demo .demo-nav { display:flex; flex-wrap:wrap; gap:8px; margin:20px 0 8px; padding:6px; background:#eaf0ed; border-radius:12px; }
+.rei--demo .demo-nav a { display:flex; align-items:center; justify-content:center; min-height:44px; padding:8px 18px; border-radius:8px; text-decoration:none; color:#39584b; font-weight:600; font-size:.88rem; }
+.rei--demo .demo-nav a[aria-current] { background:#fff; color:#163f31; box-shadow:0 1px 4px #173e3515; }
+.rei--demo .demo-nav a:hover { background:#f8fbf9; }
+.rei--demo :is(button,a,input,select,textarea,summary):focus-visible { outline:3px solid #296bc4; outline-offset:3px; }
+.rei--demo .demo-disclosure > summary { padding:12px 4px; min-height:44px; box-sizing:border-box; color:#254b3c; font-size:.88rem; font-weight:650; cursor:pointer; }
+.rei--demo .demo-disclosure[open] > summary { margin-bottom:12px; }
+.rei--demo .demo-disclosure .rei-audit-layout { margin-top:12px; }
+.rei--demo .demo-catalogue { margin-top:22px; }
+.rei--demo .demo-import { border-top:1px solid #dce5df; margin-top:24px; }
+.rei--demo .rei-heading h2 { font-size:1.8rem; line-height:1.2; }
+.rei--demo .rei-kpi { min-height:160px; border-top:3px solid #bad4c5; }
+.rei--demo .rei-kpi.is-selected { border-color:#357958; box-shadow:0 0 0 1px #357958; }
+.rei--demo .rei-kpi strong { font-size:2.3rem; }
+.rei--demo .rei-kpi small { font-size:.75rem; color:#5b6e63; }
+.rei--demo .rei-table { font-size:.84rem; }
+.rei--demo .rei-table th { font-size:.74rem; color:#52665a; }
+.rei--demo .rei-table small { font-size:.74rem; color:#586b60; }
+.rei--demo .rei-table .rei-link { min-height:44px; }
+.rei--demo .btn,.rei--demo select { min-height:44px; }
+@media(max-width:700px) {
+  .rei--demo .demo-nav { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+  .rei--demo .demo-nav a { padding:8px; font-size:.82rem; }
+  .rei--demo .rei-heading h2 { font-size:1.45rem; }
+  .rei--demo .rei-heading > .btn { width:100%; }
+  .rei--demo .rei-kpi { min-height:145px; padding:14px 12px; }
+  .rei--demo .rei-kpi strong { font-size:2rem; }
+  .rei--demo .rei-kpi small { font-size:.7rem; }
+  .rei--demo .rei-scope { align-items:stretch; }
+  .rei--demo .rei-scope .toolbar { width:100%; }
+}
 .rei { --rei-ink:#173e35; --rei-soft:#eef5f2; max-width:1500px; margin:0 auto; }
 .rei h2 { font-size:1.36rem; letter-spacing:-.035em; }
 .rei h3 { font-size:1rem; }
