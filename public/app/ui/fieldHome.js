@@ -7,7 +7,7 @@ import { MARKET_CONTEXT_NOTE, disclaimer } from './dom.js';
 export const narrow = true;
 
 export const title = (ctx) => ctx.user.name;
-export const subtitle = () => 'Field price capture · Singapore';
+export const subtitle = () => 'Price Validation · Capture and review prices';
 
 export function render(ctx) {
   const { data, user } = ctx;

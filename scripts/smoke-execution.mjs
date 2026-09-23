@@ -56,8 +56,8 @@ try {
   for (const tab of ['expected', 'photo', 'differences']) { await page.locator(`[data-action="tw-audit-tab"][data-tab="${tab}"]`).click(); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true); }
   if (process.env.SHOTS) await page.screenshot({ path: '.smoke-screenshots/tw-audit-mobile.png', fullPage: true });
   console.log('PASS: mobile overview and Expected / Photo / Differences tabs have no page overflow.');
-  await page.locator('[data-action="switch-market"]').selectOption('SG'); await page.locator('[data-action="switch-user"]').waitFor();
-  assert.match(await page.locator('.sidebar__brand').innerText(), /Singapore/i);
+  await page.locator('[data-action="switch-module"]').selectOption('price'); await page.locator('[data-action="switch-user"]').waitFor();
+  assert.match(await page.locator('.sidebar__brand').innerText(), /Price Validation/i);
   console.log('PASS: Singapore navigation remains available.');
   assert.deepEqual(errors, []); console.log('Taiwan smoke passed with no page exceptions.');
 } finally { await browser?.close(); server?.kill(); }

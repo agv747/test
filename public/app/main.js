@@ -34,6 +34,7 @@ import * as admin from './ui/admin.js';
 import * as executionPage from './execution/ui.js';
 import { initExecution, getExecution } from './execution/client.js';
 import { configuredSingaporeProvider } from './execution/sg-provider.js';
+import { MODULES, selectedModule, moduleForPath, moduleHome } from './module-navigation.js';
 
 // Every configured model becomes a provider; the simulator stays the default so a fresh
 // install never spends money without someone choosing to.
@@ -106,7 +107,7 @@ const TAIWAN_NAV = [
   { route: 'tw/planograms', label: 'Planogram Library', icon: '▦' },
   { route: 'admin/ai', label: 'AI Models & Connections', icon: '✦' },
 ];
-const isTaiwan = ctx => ctx.path.startsWith('tw/') || (ctx.path === 'admin/ai' && store.getSession().market === 'TW');
+const isTaiwan = ctx => moduleForPath(ctx.path, store.getSession()) === 'planogram';
 const navigation = ctx => isTaiwan(ctx) ? TAIWAN_NAV : ctx.user.role === 'field' ? FIELD_NAV : MANAGER_NAV;
 
 /* --------------------------------------------------------------- routing */
@@ -127,13 +128,12 @@ export function parseHash() {
  * The Tower is one click away and keeps everything.
  */
 function defaultRoute() {
-  if (store.getSession().market === 'TW') return 'tw/overview';
-  return store.currentUser()?.role === 'field' ? 'field/home' : 'manager/overview';
+  return moduleHome(selectedModule(store.getSession()), store.currentUser()?.role);
 }
 
 export function navigate(path, params = {}) {
-  if (path.startsWith('tw/')) store.setSession({ market: 'TW' });
-  else if (path.startsWith('field/') || path.startsWith('manager/')) store.setSession({ market: 'SG' });
+  if (path.startsWith('tw/')) store.setSession({ module: 'planogram' });
+  else if (path !== 'admin/ai') store.setSession({ module: 'price' });
   const query = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
   ).toString();
@@ -314,6 +314,8 @@ function roleSwitcher(ctx) {
 
 export function render() {
   const ctx = buildContext();
+  const activeModule = moduleForPath(ctx.path, store.getSession());
+  if (store.getSession().module !== activeModule) store.setSession({ module: activeModule });
   const page = ROUTES[ctx.path] ?? ROUTES[defaultRoute()];
   currentPage = page;
 
@@ -333,7 +335,7 @@ export function render() {
       <nav class="sidebar">
         <div class="sidebar__brand">
           <strong>Retail Execution Intelligence</strong>
-          <span>${isTaiwan(ctx) ? 'Taiwan · Planogram verification' : 'Singapore · Price intelligence'}</span>
+          <span>${MODULES[moduleForPath(ctx.path, store.getSession())].label}</span>
         </div>
         ${navHtml(ctx)}
         <div class="sidebar__footer">
@@ -346,7 +348,8 @@ export function render() {
             <h1>${esc(page.title(ctx))}</h1>
             <small>${page.subtitle ? esc(page.subtitle(ctx)) : ''}</small>
           </div>
-          <select data-action="switch-market" aria-label="Market" style="width:auto"><option value="SG"${isTaiwan(ctx) ? '' : ' selected'}>Singapore · Prices</option><option value="TW"${isTaiwan(ctx) ? ' selected' : ''}>Taiwan · Planograms</option></select>
+          <select data-action="switch-module" aria-label="Module" style="width:auto"><option value="price"${isTaiwan(ctx) ? '' : ' selected'}>Price Validation</option><option value="planogram"${isTaiwan(ctx) ? ' selected' : ''}>Planogram Check</option></select>
+          <span class="small muted" title="Existing dataset scope; switching modules does not change its market or currency">Data scope: ${isTaiwan(ctx) ? 'TW · UTC+08' : 'SG · SGD'}</span>
           ${isTaiwan(ctx) || ctx.path === 'admin/ai' ? `<span class="pill pill--info">${getExecution().mode === 'shared' ? esc(getExecution().actor?.name ?? 'Private workspace') : 'Demo workspace'}</span>` : `${sourceIndicator()}${demoBadge()}${roleSwitcher(ctx)}`}
         </header>
         <main class="content${page.narrow ? ' content--narrow' : ''}">${body}</main>
@@ -396,9 +399,10 @@ function delegate(root) {
 
   root.addEventListener('change', (event) => {
     const target = event.target;
-    if (target.dataset.action === 'switch-market') {
-      store.setSession({ market: target.value });
-      navigate(target.value === 'TW' ? 'tw/overview' : defaultRoute());
+    if (target.dataset.action === 'switch-module') {
+      if (!Object.hasOwn(MODULES, target.value)) return;
+      store.setSession({ module: target.value });
+      navigate(moduleHome(target.value, store.currentUser()?.role));
       render();
       return;
     }
