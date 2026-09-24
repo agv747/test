@@ -17,7 +17,7 @@ The Worker remains `price-check`, using its existing DB binding. Deployment adds
 
 Set secrets in Cloudflare Worker Settings → Variables and Secrets, or `wrangler secret put NAME`:
 
-- `ADMIN_ACCESS_TOKEN`: random URL-safe token of at least 32 characters. Generate locally with `openssl rand -hex 32`. Paste it into the app's private-workspace sign-in, not a URL.
+- `ADMIN_ACCESS_TOKEN`: URL-safe token of 3–512 characters. Three-character tokens are accepted for convenience but easily guessed; a random token of at least 32 characters remains recommended. Generate locally with `openssl rand -hex 32`. Paste it into the app's private-workspace sign-in, not a URL.
 - `AI_CREDENTIALS_ENCRYPTION_KEY`: base64-encoded 32 random bytes (`openssl rand -base64 32`). Needed to save encrypted provider credentials. Keep the same key across deployments; changing it without migration makes stored credentials unreadable.
 - Alternatively, provider keys can come from `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `COMPATIBLE_API_KEY`.
 - Optional `APP_ACCESS_USERS_JSON`: an array of `{ "token": "<random token>", "id": "user-id", "name": "Name", "role": "admin|manager|field|viewer", "markets": ["SG", "TW"] }`. Every token must satisfy the same length/character rules.

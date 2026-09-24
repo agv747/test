@@ -7,12 +7,15 @@ function configuredUsers(env) {
     try { users = JSON.parse(env.APP_ACCESS_USERS_JSON); } catch { return []; }
   }
   if (!Array.isArray(users)) return [];
-  if (env.ADMIN_ACCESS_TOKEN) users.push({ token: env.ADMIN_ACCESS_TOKEN, id: 'admin', name: 'Administrator', role: 'admin', markets: ['SG', 'TW'] });
-  return users.filter(u => typeof u.token === 'string' && u.token.length >= 32 && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
+  users = users.filter(u => typeof u.token === 'string' && u.token.length >= 32 && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
+  if (typeof env.ADMIN_ACCESS_TOKEN === 'string' && env.ADMIN_ACCESS_TOKEN.length >= 3 && env.ADMIN_ACCESS_TOKEN.length <= 512 && /^[A-Za-z0-9_-]+$/.test(env.ADMIN_ACCESS_TOKEN)) {
+    users.push({ token: env.ADMIN_ACCESS_TOKEN, id: 'admin', name: 'Administrator', role: 'admin', markets: ['SG', 'TW'] });
+  }
+  return users;
 }
 export const authConfigured = env => configuredUsers(env).length > 0;
 export async function actorForToken(env, token) {
-  if (typeof token !== 'string' || token.length < 32 || token.length > 512) return null;
+  if (typeof token !== 'string' || token.length < 3 || token.length > 512) return null;
   const hash = await digest(token);
   for (const u of configuredUsers(env)) {
     const expected = await digest(u.token); let diff = 0;
