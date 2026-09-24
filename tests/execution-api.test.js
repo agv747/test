@@ -56,10 +56,34 @@ test('AI-07/08: field override is denied; server settings and market defaults st
   const m = (await f.request('/ai/models', { connectionId: c.id, remoteModelId: 'fixture-model-only', displayName: 'Fixture model', maxOutputTokens: 8192, enabled: true, structuredOutput: true })).body.model;
   assert.deepEqual(m.capabilities, {});
   const route = { expectedRevision: 0, defaultModelId: m.id, allowedModelIds: [m.id], timeoutMs: 60000, maxOutputTokens: 8192, fieldOverride: false };
-  assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).body.error.code, 'AI_MODEL_NOT_ALLOWED');
+  assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).status, 200);
+  route.expectedRevision = 1;
   const stored = await readRecord(f.DB, 'model', m.id); stored.data.capabilities = { [TASK_TW]: { state: 'verified' }, [TASK_SG]: { state: 'verified' } }; await writeRecord(f.DB, 'model', m.id, stored.data, stored.revision);
   assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).status, 200);
   assert.equal((await readRecord(f.DB, 'route', TASK_SG)), null);
   const response = await f.request('/ai/runs', { task: TASK_TW, modelId: m.id, captureId: 'invented', captureRevision: 1, idempotencyKey: 'fixture-run-key' }, { credential: fieldToken });
   assert.equal(response.status, 403); assert.equal(response.body.error.code, 'AI_MODEL_NOT_ALLOWED'); f.DB.close();
+});
+
+
+test('Administrator login accepts three characters while user tokens retain their minimum', async () => {
+  const f = fixture();
+  try {
+    f.env.ADMIN_ACCESS_TOKEN = 'a_3';
+    assert.equal((await f.request('/session', undefined, { credential: null })).body.authConfigured, true);
+    const login = await f.request('/session', { accessToken: 'a_3' }, { credential: null });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.actor.role, 'admin');
+    assert.match(login.response.headers.get('set-cookie'), /rei_session=a_3;/);
+    assert.equal((await f.request('/workspace', undefined, { credential: 'a_3' })).status, 200);
+    assert.equal((await f.request('/session', { accessToken: 'bad' }, { credential: null })).status, 401);
+    for (const invalid of ['a', 'ab', 'a b', 'a;b', 'a'.repeat(513)]) {
+      f.env.ADMIN_ACCESS_TOKEN = invalid;
+      assert.equal((await f.request('/session', { accessToken: invalid }, { credential: null })).status, 401);
+    }
+    delete f.env.ADMIN_ACCESS_TOKEN;
+    f.env.APP_ACCESS_USERS_JSON = JSON.stringify([{ id: 'short-user', name: 'User', role: 'admin', markets: ['TW'], token: 'xyz' }]);
+    assert.equal((await f.request('/session', undefined, { credential: null })).body.authConfigured, false);
+    assert.equal((await f.request('/session', { accessToken: 'xyz' }, { credential: null })).status, 401);
+  } finally { f.DB.close(); }
 });

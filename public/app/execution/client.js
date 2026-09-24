@@ -99,7 +99,8 @@ export async function launchRun(captureId, modelId) {
   const run = await api('/ai/runs', { task: 'tw_planogram_recognition', captureId, captureRevision: cap.revision, ...(modelId ? { modelId } : {}), idempotencyKey: crypto.randomUUID() });
   localStorage.setItem(`rei.run.${captureId}`, run.id); triggerRun(run.id); return run;
 }
-export function triggerRun(id) { api(`/ai/runs/${encodeURIComponent(id)}/process`, {}).catch(() => {}); }
+// Jobs are already persisted by enqueueRun; the scheduled worker processes them.
+export function triggerRun(id) { return id; }
 export function savedRunId(captureId) { return localStorage.getItem(`rei.run.${captureId}`); }
 export function downloadJson(value, name) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);

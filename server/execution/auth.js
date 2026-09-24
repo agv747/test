@@ -2,34 +2,39 @@ import { requireThat } from '../../public/app/execution/domain.js';
 import { digest } from './storage.js';
 
 /**
- * The shortest token the deployment will accept.
+ * Who may sign in, and the two different length rules that decide it.
  *
- * Set to 3 at the owner's request, so a short hand-typed token works. What that costs is worth
- * stating where the number lives: this token is the only authentication the private workspace
- * has, `sessionCookie` stores it verbatim as the session cookie, and nothing here rate-limits
- * attempts. Three characters from the 64-character alphabet below is a few hundred thousand
- * guesses — minutes of scripted traffic — and whoever lands it holds an admin session over the
- * shared workspace and the AI credential screens.
+ * `ADMIN_ACCESS_TOKEN` accepts three characters at the owner's request; tokens listed in
+ * `APP_ACCESS_USERS_JSON` keep the 32-character minimum. Relaxing only the single
+ * deployment-owned token is deliberate — it is the one a person types by hand, while the user
+ * list is machine-generated and has no reason to be short.
  *
- * The other two checks are NOT length policy and must stay. The character class keeps the token
- * safe to place in a `Set-Cookie` header: a value carrying `;`, a comma or a newline would let
- * an attacker forge cookie attributes. The 512 ceiling bounds the work an unauthenticated
+ * What the short admin token costs, recorded where the number lives: it is the only
+ * authentication the private workspace has, `sessionCookie` stores it verbatim as the session
+ * cookie, and nothing here limits attempts. Three characters over the alphabet below is a few
+ * hundred thousand guesses — minutes of scripted traffic — and whoever lands it holds an admin
+ * session over the shared workspace and the AI credential screens.
+ *
+ * The character class and the 512 ceiling are NOT length policy and must stay whatever the
+ * minimum becomes. The token goes into a `Set-Cookie` header, so a value carrying `;`, a comma
+ * or a newline could forge cookie attributes; the ceiling bounds the work an unauthenticated
  * caller can force per request.
  */
-const MIN_TOKEN_LENGTH = 3;
-const MAX_TOKEN_LENGTH = 512;
 function configuredUsers(env) {
   let users = [];
   if (env.APP_ACCESS_USERS_JSON) {
     try { users = JSON.parse(env.APP_ACCESS_USERS_JSON); } catch { return []; }
   }
   if (!Array.isArray(users)) return [];
-  if (env.ADMIN_ACCESS_TOKEN) users.push({ token: env.ADMIN_ACCESS_TOKEN, id: 'admin', name: 'Administrator', role: 'admin', markets: ['SG', 'TW'] });
-  return users.filter(u => typeof u.token === 'string' && u.token.length >= MIN_TOKEN_LENGTH && u.token.length <= MAX_TOKEN_LENGTH && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
+  users = users.filter(u => typeof u.token === 'string' && u.token.length >= 32 && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
+  if (typeof env.ADMIN_ACCESS_TOKEN === 'string' && env.ADMIN_ACCESS_TOKEN.length >= 3 && env.ADMIN_ACCESS_TOKEN.length <= 512 && /^[A-Za-z0-9_-]+$/.test(env.ADMIN_ACCESS_TOKEN)) {
+    users.push({ token: env.ADMIN_ACCESS_TOKEN, id: 'admin', name: 'Administrator', role: 'admin', markets: ['SG', 'TW'] });
+  }
+  return users;
 }
 export const authConfigured = env => configuredUsers(env).length > 0;
 export async function actorForToken(env, token) {
-  if (typeof token !== 'string' || token.length < MIN_TOKEN_LENGTH || token.length > MAX_TOKEN_LENGTH) return null;
+  if (typeof token !== 'string' || token.length < 3 || token.length > 512) return null;
   const hash = await digest(token);
   for (const u of configuredUsers(env)) {
     const expected = await digest(u.token); let diff = 0;

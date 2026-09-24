@@ -37,17 +37,18 @@ test('AI-03/04: all four provider adapters send native image and structured-outp
   }
   const r = buildProviderRequest({ ...conn('openai_compatible'), protocol: 'chat_completions' }, model, input, {});
   assert.equal(r.suffix, '/chat/completions'); assert.equal(r.body.messages[0].content[1].type, 'image_url');
-  const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl: async (url, options) => { assert.equal(new URL(url).host, 'generativelanguage.googleapis.com'); assert.equal(options.headers['x-goog-api-key'], 'fixture-key'); assert.equal(options.redirect, 'error'); return Response.json(geminiResponse(output()), { headers: { 'x-request-id': 'req-fixture' } }); } });
+  const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl: async (url, options) => { assert.equal(new URL(url).host, 'generativelanguage.googleapis.com'); assert.equal(options.headers['x-goog-api-key'], 'fixture-key'); assert.equal(options.redirect, 'manual'); return Response.json(geminiResponse(output()), { headers: { 'x-request-id': 'req-fixture' } }); } });
   assert.equal(response.resolvedModelId, 'fixture-resolved'); assert.equal(response.requestId, 'req-fixture'); assert.equal(response.result.products.length, 2);
 });
 test('AI-05: model listing is paginated and carries no assumed capability', async () => {
   const page = await listProviderModels(conn('gemini'), 'fixture-key', 'token with spaces', { fetchImpl: async url => { assert.match(url, /pageToken=token%20with%20spaces/); return Response.json({ models: [{ name: 'models/a', displayName: 'A' }], nextPageToken: 'next' }); } });
   assert.equal(page.models[0].remoteModelId, 'a'); assert.equal(page.nextCursor, 'next'); assert.equal(page.models[0].capabilities, undefined);
 });
-test('AI-06: text-only/unverified, disabled and wrong-market models cannot enter routes', () => {
+test('AI-06: optional probes do not block selection; disabled and wrong-market models are rejected', () => {
   const route = { defaultModelId: model.id, allowedModelIds: [model.id], timeoutMs: 60000, maxOutputTokens: 8192 }, c = { ...conn('gemini'), credentialConfigured: true }, m = { ...model, connectionId: c.id };
   assert.equal(validateRoute(route, [m], [c], 'TW', TASK_TW).fallbackModelId, null);
-  for (const bad of [{ ...m, capabilities: {} }, { ...m, enabled: false }]) assert.throws(() => validateRoute(route, [bad], [c], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
+  assert.equal(validateRoute(route, [{ ...m, capabilities: {} }], [c], 'TW', TASK_TW).defaultModelId, m.id);
+  for (const bad of [{ ...m, enabled: false }]) assert.throws(() => validateRoute(route, [bad], [c], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
   assert.throws(() => validateRoute(route, [m], [{ ...c, allowedMarkets: ['SG'] }], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
 });
 test('AI-09: errors are typed; only transient transport failures are retryable', async () => {
@@ -112,4 +113,42 @@ test('AI-10: a single schema repair is recorded and a second invalid response fa
 test('Durable image chunks reconstruct exact original bytes', async () => {
   const DB = sqliteD1(); await initDb(DB); const bytes = new Uint8Array(300000); for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
   await saveMedia(DB, 'private-image', bytes); assert.deepEqual(await readMedia(DB, 'private-image'), bytes); DB.close();
+});
+
+
+test('Provider requests use Workers-compatible manual redirects and never forward credentials', async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    let calls = 0;
+    await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', {
+      fetchImpl: async (url, options) => {
+        calls++;
+        assert.equal(new URL(url).host, 'generativelanguage.googleapis.com');
+        assert.equal(options.redirect, 'manual');
+        return new Response(null, { status, headers: { location: 'https://untrusted.example/key' } });
+      }
+    }), e => e.code === 'AI_REDIRECT_BLOCKED' && e.retryable === false && !e.message.includes('fixture-key'));
+    assert.equal(calls, 1);
+  }
+});
+
+test('Browser process requests do not own provider calls; scheduled jobs execute once', async t => {
+  const { handleExecution } = await import('../server/execution/api.js');
+  const DB = sqliteD1(), token = 'fixture_admin_token_for_scheduled_jobs_123456';
+  const env = { DB, ADMIN_ACCESS_TOKEN: token, GEMINI_API_KEY: 'fixture-key' }, actor = { id: 'admin', role: 'admin', markets: ['TW'] };
+  const selection = { model, connection: { ...conn('gemini'), credentialSource: 'environment' }, route: { timeoutMs: 1000, maxOutputTokens: 8192 }, task: TASK_TW, market: 'TW' };
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(geminiResponse(output())); });
+  try {
+    const run = await enqueueRun(env, actor, input, selection, { idempotencyKey: 'scheduled-regression' });
+    const response = await handleExecution(new Request(`https://app.example/api/execution/ai/runs/${run.id}/process`, { method: 'POST', headers: { origin: 'https://app.example', cookie: `rei_session=${token}` } }), env);
+    assert.equal(response.status, 202); assert.equal(calls, 0);
+    assert.equal((await readRun(env, actor, run.id)).state, 'queued');
+    await processDueJobs(env);
+    assert.equal((await readRun(env, actor, run.id)).state, 'needs_review'); assert.equal(calls, 1);
+    await processDueJobs(env); assert.equal(calls, 1);
+    const interrupted = await enqueueRun(env, actor, input, selection, { idempotencyKey: 'interrupted-regression' });
+    await DB.prepare("UPDATE rei_jobs SET status='processing',lease_token='expired',lease_until=1 WHERE id=?").bind(interrupted.id).run();
+    await processDueJobs(env);
+    assert.equal((await readRun(env, actor, interrupted.id)).error.code, 'AI_INTERRUPTED'); assert.equal(calls, 1);
+  } finally { DB.close(); }
 });

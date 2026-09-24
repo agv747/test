@@ -47,7 +47,13 @@ try {
   await page.locator('[data-plan-field="code"]').fill('TW-REVIEW-DRAFT'); await page.locator('[data-action="tw-plan-save"]').click(); await page.getByText('Draft saved.').waitFor();
   console.log('PASS: published plan is immutable; duplicate draft saves.');
   await page.goto(`${base}/#/admin/ai`); await page.locator('[data-form="ai-signin"]').waitFor();
-  for (const tab of ['connections', 'models', 'routing', 'compare']) { await page.locator(`[data-action="ai-tab"][data-tab="${tab}"]`).click(); assert.equal(await page.locator('.rei-provider-cards .card').count(), 4); }
+  // Only 'setup' and 'connections' are top-level tabs now; the rest live inside the collapsed
+  // "Advanced settings" disclosure, and a re-render closes it again, so open it before each click.
+  for (const tab of ['connections', 'models', 'routing', 'compare']) {
+    await page.evaluate(() => document.querySelectorAll('details').forEach(d => { d.open = true; }));
+    await page.locator(`[data-action="ai-tab"][data-tab="${tab}"]`).click();
+    assert.equal(await page.locator('.rei-provider-cards .card').count(), 4);
+  }
   console.log('PASS: all four providers are shown as not configured without sign-in.');
   await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${base}/#/tw/overview`); await page.locator('.rei-kpis').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);

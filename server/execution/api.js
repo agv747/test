@@ -4,7 +4,7 @@ import { initDb, readRecord, readWorkspace, writeRecord, listRecords, scopeWorks
 import { getActor, actorForToken, authConfigured, sameOrigin, sessionCookie } from './auth.js';
 import { encryptCredential, getCredential, connectionDto, hasEnvironmentCredential } from './credentials.js';
 import { validateConnection, listProviderModels } from './adapters.js';
-import { selectModel, validateRoute, inputForCapture, enqueueRun, readRun, probeInput, executeRun } from './jobs.js';
+import { selectModel, validateRoute, inputForCapture, enqueueRun, readRun, probeInput } from './jobs.js';
 
 export const reply = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers } });
 async function bodyJson(request, limit = 2100000) {
@@ -40,7 +40,7 @@ async function route(request, env) {
   const url = new URL(request.url), path = url.pathname.replace(/^\/api\/execution/, ''), method = request.method;
   if (!['GET', 'HEAD'].includes(method)) sameOrigin(request);
   if (path === '/session') {
-    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0' });
+    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0', buildSha: env.DEPLOY_COMMIT ?? null });
     if (method === 'DELETE') return reply({ actor: null }, 200, { 'set-cookie': sessionCookie('', request, true) });
     if (method === 'POST') {
       const p = await bodyJson(request, 3000), actor = await actorForToken(env, p.accessToken);
@@ -191,7 +191,7 @@ async function route(request, env) {
   if (runPath) {
     const run = await readRun(env, actor, runPath[1]);
     if (method === 'GET' && !runPath[2]) return reply(run);
-    if (method === 'POST' && runPath[2]) { authorize(actor, run.purpose === 'capability' ? 'ai.manage' : run.purpose === 'comparison' ? 'ai.compare' : 'audit.capture', taskMarket(run.task)); await executeRun(env, run.id); return reply(await readRun(env, actor, run.id)); }
+    if (method === 'POST' && runPath[2]) { authorize(actor, run.purpose === 'capability' ? 'ai.manage' : run.purpose === 'comparison' ? 'ai.compare' : 'audit.capture', taskMarket(run.task)); /* Execution belongs to the scheduled worker, never to a browser connection. */ return reply(run, ['queued', 'processing'].includes(run.state) ? 202 : 200); }
   }
   if (path === '/ai/experiments' && method === 'POST') {
     authorize(actor, 'ai.compare'); const p = await bodyJson(request, 12000), record = await readWorkspace(env.DB), capture = visibleCapture(record.data, actor, p.captureId);
