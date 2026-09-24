@@ -63,3 +63,26 @@ test('AI-07/08: field override is denied; server settings and market defaults st
   const response = await f.request('/ai/runs', { task: TASK_TW, modelId: m.id, captureId: 'invented', captureRevision: 1, idempotencyKey: 'fixture-run-key' }, { credential: fieldToken });
   assert.equal(response.status, 403); assert.equal(response.body.error.code, 'AI_MODEL_NOT_ALLOWED'); f.DB.close();
 });
+
+
+test('Administrator login accepts three characters while user tokens retain their minimum', async () => {
+  const f = fixture();
+  try {
+    f.env.ADMIN_ACCESS_TOKEN = 'a_3';
+    assert.equal((await f.request('/session', undefined, { credential: null })).body.authConfigured, true);
+    const login = await f.request('/session', { accessToken: 'a_3' }, { credential: null });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.actor.role, 'admin');
+    assert.match(login.response.headers.get('set-cookie'), /rei_session=a_3;/);
+    assert.equal((await f.request('/workspace', undefined, { credential: 'a_3' })).status, 200);
+    assert.equal((await f.request('/session', { accessToken: 'bad' }, { credential: null })).status, 401);
+    for (const invalid of ['a', 'ab', 'a b', 'a;b', 'a'.repeat(513)]) {
+      f.env.ADMIN_ACCESS_TOKEN = invalid;
+      assert.equal((await f.request('/session', { accessToken: invalid }, { credential: null })).status, 401);
+    }
+    delete f.env.ADMIN_ACCESS_TOKEN;
+    f.env.APP_ACCESS_USERS_JSON = JSON.stringify([{ id: 'short-user', name: 'User', role: 'admin', markets: ['TW'], token: 'xyz' }]);
+    assert.equal((await f.request('/session', undefined, { credential: null })).body.authConfigured, false);
+    assert.equal((await f.request('/session', { accessToken: 'xyz' }, { credential: null })).status, 401);
+  } finally { f.DB.close(); }
+});
