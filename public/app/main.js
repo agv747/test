@@ -312,6 +312,7 @@ function roleSwitcher(ctx) {
   </select>`;
 }
 
+let lastRenderedHash = null;
 export function render() {
   const ctx = buildContext();
   const activeModule = moduleForPath(ctx.path, store.getSession());
@@ -320,6 +321,7 @@ export function render() {
   currentPage = page;
 
   const root = document.getElementById('root');
+  const scrollBefore = window.scrollY;
   let body;
   try {
     body = page.render(ctx);
@@ -359,7 +361,19 @@ export function render() {
     </div>`;
 
   if (page.mount) page.mount(ctx, root);
-  window.scrollTo(0, 0);
+  // Going somewhere new starts at the top; redrawing the page you are already on must not move
+  // you. Polling a recognition run re-renders this view every couple of seconds, and scrolling to
+  // zero each time made the page jump under the reader while they were still looking at it.
+  const navigated = lastRenderedHash !== location.hash;
+  lastRenderedHash = location.hash;
+  if (navigated) { window.scrollTo(0, 0); return; }
+  // Restoring needs the new layout to exist. Straight after `innerHTML` the document still has
+  // the collapsed height of an empty root, so a restore is silently clamped to a few pixels —
+  // which looks exactly like the jump this is meant to stop. Force layout, then restore, and
+  // keep a frame-later attempt for content that settles its height asynchronously.
+  void document.body.offsetHeight;
+  window.scrollTo(0, scrollBefore);
+  if (window.scrollY !== scrollBefore) requestAnimationFrame(() => window.scrollTo(0, scrollBefore));
 }
 
 /* -------------------------------------------------------------- events */

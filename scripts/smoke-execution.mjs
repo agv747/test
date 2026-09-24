@@ -47,11 +47,15 @@ try {
   await page.locator('[data-plan-field="code"]').fill('TW-REVIEW-DRAFT'); await page.locator('[data-action="tw-plan-save"]').click(); await page.getByText('Draft saved.').waitFor();
   console.log('PASS: published plan is immutable; duplicate draft saves.');
   await page.goto(`${base}/#/admin/ai`); await page.locator('[data-form="ai-signin"]').waitFor();
-  // Only 'setup' and 'connections' are top-level tabs now; the rest live inside the collapsed
-  // "Advanced settings" disclosure, and a re-render closes it again, so open it before each click.
+  // Only 'setup' and 'connections' are top-level tabs; models, checks, routing and compare live
+  // inside the collapsed "Advanced settings" disclosure, so their buttons are in the DOM but not
+  // visible. Opening the disclosure first is a race — each tab click re-renders the page, which
+  // closes it again, sometimes between the open and the click. What this check is about is that
+  // every tab renders the four provider cards, not how the disclosure behaves, so dispatch the
+  // click straight at the delegated handler and leave visibility out of it.
   for (const tab of ['connections', 'models', 'routing', 'compare']) {
-    await page.evaluate(() => document.querySelectorAll('details').forEach(d => { d.open = true; }));
-    await page.locator(`[data-action="ai-tab"][data-tab="${tab}"]`).click();
+    await page.locator(`[data-action="ai-tab"][data-tab="${tab}"]`).dispatchEvent('click');
+    await page.locator('.rei-provider-cards .card').first().waitFor();
     assert.equal(await page.locator('.rei-provider-cards .card').count(), 4);
   }
   console.log('PASS: all four providers are shown as not configured without sign-in.');

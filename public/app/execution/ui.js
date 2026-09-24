@@ -255,6 +255,17 @@ export function mount(ctx) {
   if (!id || state.run?.id === id && !['queued', 'processing'].includes(state.run.state)) return;
   state.poll = setTimeout(async () => {
     if (!location.hash.includes('tw/audits/detail')) return;
-    try { state.run = await client.api(`/ai/runs/${id}`); if (state.run.state === 'queued') client.triggerRun(id); ctx.render(); } catch (e) { state.error = e.message; ctx.render(); }
+    try {
+      const next = await client.api(`/ai/runs/${id}`);
+      // A queued run waits for the scheduled worker, so most polls come back identical. Redrawing
+      // on those rebuilds the whole page for no visible change — which collapsed open disclosures
+      // and threw the reader back to the top every two seconds. Re-arm quietly instead, and draw
+      // only when the run actually moved.
+      const changed = next.id !== state.run?.id || next.state !== state.run?.state
+        || next.error?.message !== state.run?.error?.message;
+      state.run = next;
+      if (next.state === 'queued') client.triggerRun(id);
+      if (changed) ctx.render(); else mount(ctx);
+    } catch (e) { state.error = e.message; ctx.render(); }
   }, 2000);
 }
