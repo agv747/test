@@ -1,7 +1,19 @@
 import { upgradeDemoCatalogue } from './catalogue.js';
 import { applyCommand, clone, DomainError } from './domain.js';
 import { buildTaiwanDemo, DEMO_TIME, DEMO_ACTOR } from './demo.js';
-const DEMO_KEY = 'rei.tw.demo.v1', MODE_KEY = 'rei.workspace.mode';
+/**
+ * The demo workspace key carries a version because the workspace is reused, not rebuilt.
+ *
+ * `loadDemo` returns whatever the browser saved, and `upgradeDemoCatalogue` only ever adds
+ * catalogue records — it does not touch a stored plan's slots. So when the demonstration
+ * cabinet moved from the TW-A…TW-O placeholders to the real Taiwan portfolio, every browser
+ * that had already opened the module kept rendering the old ids: the new products arrived in
+ * the catalogue, the planogram went on pointing at the old ones.
+ *
+ * Bumping the key is what makes that visible change reach a returning user. The v1 entry is
+ * left in place rather than deleted, so nothing a browser held is destroyed by this upgrade.
+ */
+const DEMO_KEY = 'rei.tw.demo.v2', MODE_KEY = 'rei.workspace.mode';
 let demo, workspace, revision = 0, mode = 'demo', actor = null, auth = {}, ai = null;
 const urls = new Map();
 export async function api(path, body, method = body === undefined ? 'GET' : 'POST') {

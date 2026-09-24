@@ -5,4 +5,4 @@ for (const id of ['F1', 'F2', 'F3']) await writeFile(new URL(`../public/demo/tw/
 const w = buildTaiwanDemo();
 await writeFile(new URL('../public/demo/tw/planogram.json', import.meta.url), JSON.stringify(w.plans[0], null, 2) + '\n');
 await writeFile(new URL('../public/demo/tw/setup.json', import.meta.url), JSON.stringify({ catalogue: w.catalogue, fixtures: w.fixtures }, null, 2) + '\n');
-console.log('Generated three synthetic cabinet assets and validated import examples.');
+console.log(`Generated three cabinet schematics and import examples: ${w.catalogue.length} catalogue records, ${w.plans[0].slots.length} plan slots.`);

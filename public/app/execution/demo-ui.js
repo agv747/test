@@ -13,7 +13,7 @@ export function simplifyDemoMarkup(page, path, filters = {}) {
   if (path === 'tw/overview') {
     const active = Object.entries(filters).filter(([, value]) => value !== '' && value != null).length;
     page = page.replace('Know what is visible. Verify what changed.', 'Your demo at a glance')
-      .replace('Current cabinet status, including stores that have not been visited.', 'Explore the sample results, or start a new test. All products and locations are synthetic.')
+      .replace('Current cabinet status, including stores that have not been visited.', 'Explore the sample results, or start a new test. Outlets are samples; the products are real but not verified against approved master data.')
       .replace('+ Start audit', '+ New check')
       .replace('Cabinet coverage', 'Sample checks')
       .replace(/<div class="rei-filters">([\s\S]*?)<\/div>/, `<details class="demo-disclosure"${active ? ' open' : ''}><summary>Filter results${active ? ` · ${active} active` : ''}</summary><div class="rei-filters">$1</div></details>`);
