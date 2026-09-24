@@ -16,18 +16,22 @@ test('secondary filters are collapsed until an active filter must be visible', (
   assert.match(simplifyDemoMarkup(page, 'tw/overview', {territory:'West'}), /demo-disclosure" open/);
   assert.equal(simplifyDemoMarkup(page, 'admin/ai'), page);
 });
-test('synthetic catalogue contains 15 unique records without real product claims', () => {
+test('Taiwan catalogue is 56 unique real products, none claiming verified master data', () => {
   const records = buildDemoCatalogue();
-  assert.equal(records.length, 15);
-  assert.equal(new Set(records.map(s => s.id)).size, 15);
-  assert.ok(records.every(s => s.synthetic && !s.market_verified && s.gtin === null));
+  assert.equal(records.length, 56);
+  assert.equal(new Set(records.map(s => s.id)).size, 56);
+  // Real brand and manufacturer, but no GTIN and no approved-assortment link behind it:
+  // the records identify a product, they do not certify it is listed for an outlet.
+  assert.ok(records.every(s => !s.synthetic && s.market === 'TW' && s.brand_name && s.manufacturer));
+  assert.ok(records.every(s => !s.market_verified && s.gtin === null));
+  assert.equal(records.filter(s => s.manufacturer === 'JTI').length, 26);
 });
 test('catalogue upgrade preserves evidence and custom records and is demo-only', () => {
   const w = buildTaiwanDemo(), before = JSON.stringify([w.plans,w.assessments]);
   w.catalogue = w.catalogue.slice(0,5);
   w.catalogue.push({id:'custom',name:'User record'});
   upgradeDemoCatalogue(w); upgradeDemoCatalogue(w);
-  assert.equal(w.catalogue.length,16);
+  assert.equal(w.catalogue.length,57);
   assert.equal(w.catalogue[5].name,'User record');
   assert.equal(JSON.stringify([w.plans,w.assessments]),before);
   const shared={demo:false,catalogue:[]};

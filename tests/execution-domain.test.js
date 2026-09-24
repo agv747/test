@@ -14,7 +14,7 @@ test('PG-01/02/03: deterministic Taiwan fixtures have exact independent denomina
   assert.deepEqual(b.results.filter(r => r.family === 'facings').map(r => [r.status, r.observed.lower, r.observed.upper]), [['unknown', 4, 8], ['unknown', 4, 8], ['unknown', 4, 8], ['unknown', 2, 6], ['unknown', 2, 6]]);
   assert.equal(b.results.filter(r => r.family === 'presence' && r.status === 'pass').length, 5);
   assert.deepEqual([c.C, c.D, c.U, c.adherence, c.coverage], [19, 1, 0, .95, 1]);
-  assert.deepEqual(c.results.find(r => r.ruleKey === 'facings:TW-A').observed, { lower: 3, upper: 3 });
+  assert.deepEqual(c.results.find(r => r.ruleKey === 'facings:TW-JTI-MEVIUS-ORIGINAL').observed, { lower: 3, upper: 3 });
   assert.equal(w.issues.length, 3);
   const stats = overview(w, { asOf: DEMO_TIME });
   assert.deepEqual([stats.complete, stats.assigned, stats.verified, stats.completionRate, stats.verifiedRate, stats.deviations, stats.needsReview, stats.openIssues], [2, 4, 1, .5, .5, 2, 1, 3]);
@@ -24,7 +24,7 @@ test('PG-04/05/06: unknown is not empty; supporting images do not add facings', 
   const unknown = assess(a.reference, emptyReview(a.reference.plan), true);
   assert.equal(unknown.adherence, null); assert.equal(unknown.coverage, 0); assert.equal(unknown.fullyVerified, false);
   const slots = clone(a.slots); slots[0].supportingEvidence.push(slots[1].primaryEvidence, slots[1].primaryEvidence);
-  assert.equal(assess(a.reference, slots).results.find(r => r.ruleKey === 'facings:TW-A').observed.lower, 4);
+  assert.equal(assess(a.reference, slots).results.find(r => r.ruleKey === 'facings:TW-JTI-MEVIUS-ORIGINAL').observed.lower, 4);
   assert.equal(assess(a.reference, slots).C, 20);
 });
 test('PG-07/08: reference resolves at capture time and detects overlapping legacy assignments', () => {
@@ -88,9 +88,9 @@ test('PG-15/16: artwork aliases retain one SKU; field and market scopes are enfo
 });
 test('CSV import rejects duplicate, unknown and incomplete cells atomically', () => {
   const w = buildTaiwanDemo(), header = 'planogram_code,version,row,column,allowed_sku_codes,critical\n', metadata = { fixtureType: 'regular_cabinet', validFrom: DEMO_TIME };
-  const good = importPlan(header + 'TEST,1,1,1,TW-A;TW-B,true', 'csv', metadata, w.catalogue);
-  assert.deepEqual(good.slots[0].allowedSkuIds, ['TW-A', 'TW-B']);
+  const good = importPlan(header + 'TEST,1,1,1,TW-JTI-MEVIUS-ORIGINAL;TW-JTI-SEVENSTARS-ORIGINAL,true', 'csv', metadata, w.catalogue);
+  assert.deepEqual(good.slots[0].allowedSkuIds, ['TW-JTI-MEVIUS-ORIGINAL', 'TW-JTI-SEVENSTARS-ORIGINAL']);
   assert.throws(() => importPlan(header + 'TEST,1,1,1,UNKNOWN,true', 'csv', metadata, w.catalogue), /Row 2: unknown SKU/);
-  assert.throws(() => importPlan(header + 'TEST,1,1,1,TW-A,true\nTEST,1,1,1,TW-B,true', 'csv', metadata, w.catalogue), /duplicate cell/);
-  assert.throws(() => importPlan(header + 'TEST,1,2,2,TW-A,true', 'csv', metadata, w.catalogue), /Every grid cell/);
+  assert.throws(() => importPlan(header + 'TEST,1,1,1,TW-JTI-MEVIUS-ORIGINAL,true\nTEST,1,1,1,TW-JTI-SEVENSTARS-ORIGINAL,true', 'csv', metadata, w.catalogue), /duplicate cell/);
+  assert.throws(() => importPlan(header + 'TEST,1,2,2,TW-JTI-MEVIUS-ORIGINAL,true', 'csv', metadata, w.catalogue), /Every grid cell/);
 });
