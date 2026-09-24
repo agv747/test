@@ -1,0 +1,62 @@
+name: Deploy price-check
+
+on:
+  push:
+    branches: [claude/tic-tac-toe-cloudflare-vfhfd7]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: price-check-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'agv747/test' && github.ref == 'refs/heads/claude/tic-tac-toe-cloudflare-vfhfd7'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out production branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: claude/tic-tac-toe-cloudflare-vfhfd7
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Test
+        run: npm test
+      - name: Check deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in repository Settings > Secrets and variables > Actions, then re-run this workflow.'
+            exit 1
+          fi
+      - name: Record release commit
+        id: release
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Deploy to production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_SHA: ${{ steps.release.outputs.sha }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: npx --yes wrangler@4.136.1 deploy --config wrangler.toml --keep-vars --var "DEPLOY_COMMIT:$DEPLOY_SHA"
+      - name: Verify active API version
+        env:
+          EXPECTED_COMMIT: ${{ steps.release.outputs.sha }}
+        run: node scripts/verify-deployment.mjs
+      - name: Deployment summary
+        if: success()
+        env:
+          DEPLOY_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          echo "Published commit: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Application: https://price-check.anton-grebelny.workers.dev/' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The public session API returned the expected commit. Private Gemini requests were not executed.' >> "$GITHUB_STEP_SUMMARY"

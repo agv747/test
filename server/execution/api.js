@@ -40,7 +40,7 @@ async function route(request, env) {
   const url = new URL(request.url), path = url.pathname.replace(/^\/api\/execution/, ''), method = request.method;
   if (!['GET', 'HEAD'].includes(method)) sameOrigin(request);
   if (path === '/session') {
-    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0' });
+    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0', buildSha: env.DEPLOY_COMMIT ?? null });
     if (method === 'DELETE') return reply({ actor: null }, 200, { 'set-cookie': sessionCookie('', request, true) });
     if (method === 'POST') {
       const p = await bodyJson(request, 3000), actor = await actorForToken(env, p.accessToken);
