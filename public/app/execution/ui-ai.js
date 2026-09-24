@@ -6,7 +6,7 @@ import { setActiveProvider } from '../services/recognition/provider.js';
 import { updateConfig } from '../store.js';
 
 const providers = { gemini: 'Google Gemini', openai: 'OpenAI', anthropic: 'Anthropic Claude', openai_compatible: 'OpenAI-compatible' };
-const q = { tab: 'connections', connectionId: null, modelId: null, provider: 'gemini', run: null, experiment: null, timer: null, nextCursor: null, cursorConnectionId: null };
+const q = { tab: 'connections', connectionId: null, modelId: null, modelDraft: null, pollGeneration: 0, provider: 'gemini', run: null, experiment: null, timer: null, nextCursor: null, cursorConnectionId: null };
 const btn = (action, text, attrs = '') => `<button type="button" class="btn btn--sm" data-action="${action}" ${attrs}>${text}</button>`;
 const option = (id, name, selected) => `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>${esc(name)}</option>`;
 const badge = (label, good = false) => `<span class="rei-badge ${good ? 'rei-badge--good' : 'rei-badge--neutral'}">${esc(label)}</span>`;
@@ -16,9 +16,9 @@ export function render(ctx) {
   const tab = ctx.params.tab ?? q.tab; q.tab = tab;
   return `<div class="rei-heading"><div><h2>Choose the model. Keep the evidence.</h2><p class="muted">Gemini, OpenAI, Claude or an approved compatible endpoint.</p></div>${actor ? `<div class="toolbar">${badge(actor.name, true)}${btn('ai-refresh', 'Refresh')}${btn('ai-signout', 'Sign out')}</div>` : ''}</div>
     ${!actor ? accessPanel(auth) : ''}
-    <div class="rei-tabs" role="tablist">${['connections', 'models', 'routing', 'compare'].map(t => `<button role="tab" aria-selected="${t === tab}" class="${t === tab ? 'active' : ''}" data-action="ai-tab" data-tab="${t}">${{ connections: 'Connections', models: 'Models', routing: 'Routing', compare: 'Compare' }[t]}</button>`).join('')}</div>
-    ${!actor ? `<div class="rei-provider-cards">${Object.entries(providers).map(([key, name]) => `<div class="card"><span class="rei-provider-icon">${{ gemini: '✦', openai: '◎', anthropic: 'A', openai_compatible: '↗' }[key]}</span><h3>${name}</h3>${badge('Not configured')}<p class="small muted mt">${key === 'openai_compatible' ? 'Manual model IDs · Responses or Chat Completions · approved hosts only' : 'Discover models · Test image capability · Set market-specific defaults'}</p></div>`).join('')}</div>` : !ai ? '<div class="card">Loading model configuration…</div>' : tab === 'connections' ? connections(ai, actor) : tab === 'models' ? models(ai, actor) : tab === 'routing' ? routing(ai, actor) : compare(ai, actor)}
-    ${q.run ? runPanel(q.run) : ''}`;
+    <div class="rei-tabs" role="tablist">${['connections', 'models', 'routing', 'checks', 'compare'].map(t => `<button role="tab" aria-selected="${t === tab}" class="${t === tab ? 'active' : ''}" data-action="ai-tab" data-tab="${t}">${{ connections: 'Connections', models: 'Models', routing: 'Routing', checks: 'Image checks', compare: 'Compare' }[t]}</button>`).join('')}</div>
+    ${!actor ? `<div class="rei-provider-cards">${Object.entries(providers).map(([key, name]) => `<div class="card"><span class="rei-provider-icon">${{ gemini: '✦', openai: '◎', anthropic: 'A', openai_compatible: '↗' }[key]}</span><h3>${name}</h3>${badge('Not configured')}<p class="small muted mt">${key === 'openai_compatible' ? 'Manual model IDs · Responses or Chat Completions · approved hosts only' : 'Discover models · Test image capability · Set market-specific defaults'}</p></div>`).join('')}</div>` : !ai ? '<div class="card">Loading model configuration…</div>' : tab === 'connections' ? connections(ai, actor) : tab === 'models' ? models(ai, actor) : tab === 'routing' ? routing(ai, actor) : tab === 'checks' ? checks(ai, actor) : compare(ai, actor)}
+    ${q.run && ['checks', 'compare'].includes(tab) ? runPanel(q.run) : ''}`;
 }
 function accessPanel(auth) {
   return `<div class="card rei-access"><div><h3>Private AI administration</h3><p>Sign in to configure credentials and send images to real models.</p><p class="small muted">${auth.authConfigured ? 'Use your administrator-issued access token.' : 'Deployment setup required: add a random ADMIN_ACCESS_TOKEN and an AI_CREDENTIALS_ENCRYPTION_KEY in Cloudflare Worker secrets. Existing provider environment keys can also be used.'}</p><p class="small"><a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer">Open Cloudflare dashboard ↗</a></p></div><form data-form="ai-signin"><label>Access token<input type="password" name="accessToken" required autocomplete="off" minlength="3" placeholder="Administrator-issued token"></label><button class="btn btn--primary mt" type="submit">Sign in</button><p class="xsmall muted mt">The token is used for an HttpOnly session. Model API keys are entered only after sign-in.</p></form></div>`;
@@ -35,10 +35,14 @@ function connections(ai, actor) {
 }
 function models(ai, actor) {
   if (!can(actor, 'ai.manage')) return '<div class="card">Model registration and capability testing require an Admin.</div>';
-  const m = ai.models.find(m => m.id === q.modelId);
-  const capability = (model, task) => model.capabilities?.[task]?.state ?? 'unknown';
-  return `<div class="card rei-table-scroll"><div class="rei-card-head"><h3>Connection-specific models</h3>${btn('ai-new-model', '+ Add exact model ID')}</div><p class="small muted">Listing a model does not prove it accepts images. Enable it, run the appropriate image test, then add it to routing.</p><table class="rei-table"><thead><tr><th>Model / remote ID</th><th>Connection</th><th>TW image task</th><th>SG image task</th><th>Structured output</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>${ai.models.map(m => `<tr><td><strong>${esc(m.displayName)}</strong><small>${esc(m.remoteModelId)}</small></td><td>${esc(ai.connections.find(c => c.id === m.connectionId)?.name ?? 'Unavailable')}</td><td>${badge(capability(m, TASK_TW), capability(m, TASK_TW) === 'verified')}</td><td>${badge(capability(m, TASK_SG), capability(m, TASK_SG) === 'verified')}</td><td>${m.structuredOutput ? 'Native schema requested' : 'JSON + validation'}</td><td>${m.enabled ? 'Yes' : 'No'}</td><td><div class="toolbar rei-wrap">${btn('ai-edit-model', 'Edit', `data-id="${m.id}"`)}${btn('ai-test-model', 'Test TW image', `data-id="${m.id}" data-task="${TASK_TW}"`)}${btn('ai-test-model', 'Test SG image', `data-id="${m.id}" data-task="${TASK_SG}"`)}</div></td></tr>`).join('') || '<tr><td colspan="7">Refresh models from a connection, or enter the exact provider ID below.</td></tr>'}</tbody></table></div>
-    <div class="card"><h3>${m ? 'Edit model' : 'Add model manually'}</h3><form class="rei-form-grid" data-form="ai-model"><label>Connection<select name="connectionId" required>${ai.connections.map(c => option(c.id, c.name, m?.connectionId)).join('')}</select></label><label>Exact remote model ID<input name="remoteModelId" required maxlength="160" value="${esc(m?.remoteModelId ?? '')}" placeholder="Copy the ID from your provider"></label><label>Display name<input name="displayName" required maxlength="120" value="${esc(m?.displayName ?? '')}"></label><label>Maximum output tokens<input name="maxOutputTokens" type="number" min="256" max="32768" required value="${m?.maxOutputTokens ?? 8192}"></label><label>Bounding box convention<select name="coordinateConvention">${option('xywh_normalized', '[x,y,width,height] · 0–1', m?.coordinateConvention ?? 'xywh_normalized')}${option('yxyx_1000', '[ymin,xmin,ymax,xmax] · 0–1000', m?.coordinateConvention)}${option('xywh_pixels', '[x,y,width,height] · source pixels', m?.coordinateConvention)}</select></label><div><label class="rei-check"><input name="enabled" type="checkbox" ${m?.enabled !== false ? 'checked' : ''}>Enabled</label><label class="rei-check"><input name="structuredOutput" type="checkbox" ${m?.structuredOutput !== false ? 'checked' : ''}>Request native structured output</label></div><label class="rei-full">Optional versioned pricing metadata · JSON<textarea name="pricing" rows="3" placeholder="Leave empty if pricing or usage categories are unknown">${m?.pricing ? esc(JSON.stringify(m.pricing, null, 2)) : ''}</textarea></label><p class="small muted rei-full">No price table is assumed. Missing usage or a complete billing schedule is shown as Not available.</p><div class="toolbar rei-full"><button class="btn btn--primary" type="submit">Save model</button>${m ? btn('ai-new-model', 'Cancel edit') : ''}</div></form></div>`;
+  const m = q.modelDraft ?? ai.models.find(m => m.id === q.modelId);
+  const table = `<div class="card rei-table-scroll"><div class="rei-card-head"><h3>Connection-specific models</h3>${btn('ai-new-model', '+ Add exact model ID')}</div><p class="small muted">Edit and save your model here. Image checks are available in the separate Image checks tab.</p><table class="rei-table"><thead><tr><th>Model / remote ID</th><th>Connection</th><th>Structured output</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>${ai.models.map(m => `<tr><td><strong>${esc(m.displayName)}</strong><small>${esc(m.remoteModelId)}</small></td><td>${esc(ai.connections.find(c => c.id === m.connectionId)?.name ?? 'Unavailable')}</td><td>${m.structuredOutput ? 'Native schema requested' : 'JSON + validation'}</td><td>${m.enabled ? 'Yes' : 'No'}</td><td><div class="toolbar rei-wrap">${btn('ai-edit-model', 'Edit', `data-id="${m.id}"`)}</div></td></tr>`).join('') || '<tr><td colspan="5">Refresh models from a connection, or enter the exact provider ID below.</td></tr>'}</tbody></table></div>`;
+  return `<div class="card"><h3>${m ? 'Edit model' : 'Add model manually'}</h3><form class="rei-form-grid" data-form="ai-model"><label>Connection<select name="connectionId" required>${ai.connections.map(c => option(c.id, c.name, m?.connectionId)).join('')}</select></label><label>Exact remote model ID<input name="remoteModelId" required maxlength="160" value="${esc(m?.remoteModelId ?? '')}" placeholder="Copy the ID from your provider"></label><label>Display name<input name="displayName" required maxlength="120" value="${esc(m?.displayName ?? '')}"></label><label>Maximum output tokens<input name="maxOutputTokens" type="number" min="256" max="32768" required value="${m?.maxOutputTokens ?? 8192}"></label><label>Bounding box convention<select name="coordinateConvention">${option('xywh_normalized', '[x,y,width,height] · 0–1', m?.coordinateConvention ?? 'xywh_normalized')}${option('yxyx_1000', '[ymin,xmin,ymax,xmax] · 0–1000', m?.coordinateConvention)}${option('xywh_pixels', '[x,y,width,height] · source pixels', m?.coordinateConvention)}</select></label><div><label class="rei-check"><input name="enabled" type="checkbox" ${m?.enabled !== false ? 'checked' : ''}>Enabled</label><label class="rei-check"><input name="structuredOutput" type="checkbox" ${m?.structuredOutput !== false ? 'checked' : ''}>Request native structured output</label></div><label class="rei-full">Optional versioned pricing metadata · JSON<textarea name="pricing" rows="3" placeholder="Leave empty if pricing or usage categories are unknown">${esc(m?.pricingText ?? (m?.pricing ? JSON.stringify(m.pricing, null, 2) : ''))}</textarea></label><p class="small muted rei-full">No price table is assumed. Missing usage or a complete billing schedule is shown as Not available.</p><div class="toolbar rei-full"><button class="btn btn--primary" type="submit">Save model</button>${m ? btn('ai-new-model', 'Cancel edit') : ''}</div></form></div>${table}`;
+}
+function checks(ai, actor) {
+  if (!can(actor, 'ai.manage')) return '<div class="card">Image checks require an Admin.</div>';
+  const models = ai.models.filter(m => m.enabled);
+  return `<div class="card rei-table-scroll"><h3>Image checks</h3><p class="small muted">Run checks here after saving a model. Results determine which models are available in Routing.</p><table class="rei-table"><thead><tr><th>Model</th><th>Planogram Check</th><th>Price Validation</th></tr></thead><tbody>${models.map(m => `<tr><td>${esc(m.displayName)}</td>${[[TASK_TW, 'Check planogram images'], [TASK_SG, 'Check price images']].map(([task, label]) => `<td>${badge(m.capabilities?.[task]?.state ?? 'Not checked', m.capabilities?.[task]?.state === 'verified')}${btn('ai-test-model', label, `data-id="${esc(m.id)}" data-task="${task}"`)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="3">Enable and save a model in Models first.</td></tr>'}</tbody></table></div>`;
 }
 function allowedFor(ai, task, market) {
   return ai.models.filter(m => m.enabled && m.capabilities?.[task]?.state === 'verified' && ai.connections.some(c => c.id === m.connectionId && c.enabled && c.credentialConfigured && c.allowedMarkets.includes(market)));
@@ -71,7 +75,7 @@ function runPanel(run) {
 }
 export async function onAction(action, el, ctx) {
   const { ai } = client.getExecution();
-  if (action === 'ai-tab') { q.tab = el.dataset.tab; ctx.setParams({ tab: q.tab }); }
+  if (action === 'ai-tab') { clearTimeout(q.timer); q.pollGeneration++; q.tab = el.dataset.tab; ctx.setParams({ tab: q.tab }); }
   else if (action === 'ai-refresh') await client.refreshAi();
   else if (action === 'ai-signout') { await client.signOut(); q.run = null; q.experiment = null; }
   else if (action === 'ai-new-connection') { q.connectionId = null; q.provider = 'gemini'; }
@@ -79,8 +83,8 @@ export async function onAction(action, el, ctx) {
   else if (action === 'ai-test-connection' || action === 'ai-refresh-models' || action === 'ai-next-model-page') {
     const op = action === 'ai-test-connection' ? 'test' : 'refresh-models';
     try { const result = await client.api(`/ai/connections/${el.dataset.id}/${op}`, { cursor: action === 'ai-next-model-page' ? q.nextCursor : null }); q.nextCursor = result.nextCursor; q.cursorConnectionId = el.dataset.id; } finally { await client.refreshAi(); }
-  } else if (action === 'ai-new-model') q.modelId = null;
-  else if (action === 'ai-edit-model') q.modelId = el.dataset.id;
+  } else if (action === 'ai-new-model') { q.modelId = null; q.modelDraft = null; }
+  else if (action === 'ai-edit-model') { q.modelId = el.dataset.id; q.modelDraft = null; }
   else if (action === 'ai-test-model') { q.run = await client.api(`/ai/models/${el.dataset.id}/test-task`, { task: el.dataset.task, idempotencyKey: crypto.randomUUID() }); localStorage.setItem('rei.last-probe', q.run.id); client.triggerRun(q.run.id); }
   else if (action === 'ai-view-run') q.run = await client.api(`/ai/runs/${el.dataset.id}`);
   else if (action === 'ai-close-run') { q.run = null; localStorage.removeItem('rei.last-probe'); }
@@ -98,8 +102,9 @@ export async function onSubmit(form, ctx) {
     form.querySelector('[name="apiKey"]').value = '';
     await client.api(`/ai/connections${c ? `/${c.id}` : ''}`, { name: p.get('name'), provider: c?.provider ?? p.get('provider'), baseUrl: p.get('baseUrl'), protocol: p.get('protocol'), headerMode: p.get('headerMode'), allowedMarkets: p.getAll('markets'), enabled: p.has('enabled'), credentialSource: p.get('credentialSource'), apiKey: key || null, removeKey: p.has('removeKey'), expectedRevision: c?.revision }, c ? 'PATCH' : 'POST'); q.connectionId = null;
   } else if (type === 'ai-model') {
-    const m = ai.models.find(m => m.id === q.modelId), pricing = String(p.get('pricing')).trim();
-    await client.api(`/ai/models${m ? `/${m.id}` : ''}`, { connectionId: p.get('connectionId'), remoteModelId: p.get('remoteModelId'), displayName: p.get('displayName'), maxOutputTokens: Number(p.get('maxOutputTokens')), coordinateConvention: p.get('coordinateConvention'), enabled: p.has('enabled'), structuredOutput: p.has('structuredOutput'), pricing: pricing ? JSON.parse(pricing) : null, expectedRevision: m?.revision }, m ? 'PATCH' : 'POST'); q.modelId = null;
+    const m = q.modelDraft ?? ai.models.find(m => m.id === q.modelId), pricing = String(p.get('pricing') ?? '').trim();
+    q.modelDraft = { ...m, connectionId: p.get('connectionId'), remoteModelId: p.get('remoteModelId'), displayName: p.get('displayName'), maxOutputTokens: p.get('maxOutputTokens'), coordinateConvention: p.get('coordinateConvention'), enabled: p.has('enabled'), structuredOutput: p.has('structuredOutput'), pricingText: pricing };
+    await client.api(`/ai/models${q.modelId ? `/${q.modelId}` : ''}`, { connectionId: p.get('connectionId'), remoteModelId: p.get('remoteModelId'), displayName: p.get('displayName'), maxOutputTokens: Number(p.get('maxOutputTokens')), coordinateConvention: p.get('coordinateConvention'), enabled: p.has('enabled'), structuredOutput: p.has('structuredOutput'), pricing: pricing ? JSON.parse(pricing) : null, expectedRevision: m?.revision }, q.modelId ? 'PATCH' : 'POST'); q.modelId = null; q.modelDraft = null;
   } else if (type === 'ai-route') {
     const route = ai.routes.find(r => r.task === form.dataset.task);
     await client.api(`/ai/routes/${form.dataset.market}/${form.dataset.task}`, { defaultModelId: p.get('defaultModelId'), allowedModelIds: p.getAll('allowedModelIds'), timeoutMs: Number(p.get('timeoutSeconds')) * 1000, maxOutputTokens: Number(p.get('maxOutputTokens')), fieldOverride: p.has('fieldOverride'), fallbackModelId: p.get('fallbackModelId') || null, expectedRevision: route?.revision ?? 0 }, 'PUT');
@@ -113,17 +118,19 @@ export async function onSubmit(form, ctx) {
 }
 export function mount(ctx) {
   clearTimeout(q.timer);
+  const generation = ++q.pollGeneration;
+  if (!['checks', 'compare'].includes(q.tab)) return;
   if (!client.getExecution().actor) return;
   const runId = q.run?.id ?? localStorage.getItem('rei.last-probe'), experimentId = q.experiment?.id ?? localStorage.getItem('rei.last-comparison');
-  const pollRun = runId && (!q.run || ['queued', 'processing'].includes(q.run.state));
+  const pollRun = q.tab === 'checks' && runId && (!q.run || ['queued', 'processing'].includes(q.run.state));
   const pollExperiment = q.tab === 'compare' && experimentId && (!q.experiment || q.experiment.runs?.some(r => ['queued', 'processing'].includes(r.state)));
   if (!pollRun && !pollExperiment) return;
   q.timer = setTimeout(async () => {
-    if (!location.hash.includes('admin/ai')) return;
+    if (!location.hash.includes('admin/ai') || generation !== q.pollGeneration) return;
     try {
       if (pollRun) { q.run = await client.api(`/ai/runs/${runId}`); if (q.run.state === 'queued') client.triggerRun(runId); else if (!['queued', 'processing'].includes(q.run.state)) await client.refreshAi(); }
       if (pollExperiment) { q.experiment = await client.api(`/ai/experiments/${experimentId}`); q.experiment.runs.filter(r => r.state === 'queued').forEach(r => client.triggerRun(r.id)); }
-      ctx.render();
+      if (generation === q.pollGeneration && location.hash.includes('admin/ai')) ctx.render();
     } catch { /* Logout or revoked access must not continue polling evidence. */ }
   }, 2000);
 }
