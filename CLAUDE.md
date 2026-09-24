@@ -29,7 +29,7 @@
 
 | Контур | Где | Чем менять |
 |---|---|---|
-| Browser demo | localStorage `rei.tw.demo.v1`, изображения в IndexedDB `rei-local-demo` | demo client + `applyCommand`; только этот браузер и origin |
+| Browser demo | localStorage `rei.tw.demo.v2`, изображения в IndexedDB `rei-local-demo` | demo client + `applyCommand`; только этот браузер и origin |
 | Private (shared) | `rei_records`, запись `(workspace,'TW')`; медиа в `rei_media` | `/api/execution/workspace`, `/commands`, спец-endpoints; нужен вход |
 | Relational / legacy | таблицы из `shared/schema.js`, включая `skus` | legacy API |
 
@@ -74,10 +74,24 @@ failed`. Cloudflare-credentials в окружении нет, `~/.wrangler` от
 контекст модели, то есть полученный файл — копия записи, а не её байты. Для строгой сверки
 нужен полный SHA-256 точных байтов, а не длины разделов и не усечённый хеш.
 
+## Демо-workspace переиспользуется, а не пересобирается
+
+`loadDemo()` в `client.js` возвращает то, что лежит в localStorage, а `upgradeDemoCatalogue`
+**только добавляет записи каталога** — слоты сохранённого плана он не трогает. Поэтому любое
+изменение демо-данных не доходит до браузера, который уже открывал модуль: новые SKU приезжают
+в справочник, а планограмма продолжает ссылаться на старые. Чтобы изменение дошло, надо
+**поднять версию ключа** `DEMO_KEY` (сейчас `rei.tw.demo.v2`). Старый ключ не удаляется.
+
+Вторая копия тех же данных — статика `public/demo/tw/` (`setup.json`, `planogram.json`,
+`F1–F3.svg`). Она целиком выводится из `buildTaiwanDemo()`; после изменения демо-данных
+запускать `npm run demo:tw`, иначе файлы останутся от прошлой версии.
+
 ## Состояние на 24.09.2026
 
-Ветка `claude/build-test-deploy-cqh66v`, commit `8e8ebce`, 407/407 тестов проходят,
-bundle собирается.
+Ветка `claude/build-test-deploy-cqh66v`, commit `d9e98f1`, 407/407 тестов проходят,
+bundle собирается, execution smoke проходит (нужен
+`CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome` — Playwright ищет
+headless_shell, которого нет).
 
 **D1 `workspace/TW`** — записан прямой вставкой (санкционировано владельцем), `revision=1`,
 46 116 символов / 46 182 байта: 56 SKU, 3 fixtures 7×30, план `TW-CVS-COUNTER-7X30` published
