@@ -1,6 +1,23 @@
 import { requireThat } from '../../public/app/execution/domain.js';
 import { digest } from './storage.js';
 
+/**
+ * The shortest token the deployment will accept.
+ *
+ * Set to 1 at the owner's request, so a short hand-typed token works. What that costs is worth
+ * stating where the number lives: this token is the only authentication the private workspace
+ * has, `sessionCookie` stores it verbatim as the session cookie, and nothing here rate-limits
+ * attempts. A three-character token from the 64-character alphabet below is a few hundred
+ * thousand guesses — minutes of scripted traffic — and whoever lands it holds an admin session
+ * over the shared workspace and the AI credential screens.
+ *
+ * The other two checks are NOT length policy and must stay. The character class keeps the token
+ * safe to place in a `Set-Cookie` header: a value carrying `;`, a comma or a newline would let
+ * an attacker forge cookie attributes. The 512 ceiling bounds the work an unauthenticated
+ * caller can force per request.
+ */
+const MIN_TOKEN_LENGTH = 1;
+const MAX_TOKEN_LENGTH = 512;
 function configuredUsers(env) {
   let users = [];
   if (env.APP_ACCESS_USERS_JSON) {
@@ -8,11 +25,11 @@ function configuredUsers(env) {
   }
   if (!Array.isArray(users)) return [];
   if (env.ADMIN_ACCESS_TOKEN) users.push({ token: env.ADMIN_ACCESS_TOKEN, id: 'admin', name: 'Administrator', role: 'admin', markets: ['SG', 'TW'] });
-  return users.filter(u => typeof u.token === 'string' && u.token.length >= 32 && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
+  return users.filter(u => typeof u.token === 'string' && u.token.length >= MIN_TOKEN_LENGTH && u.token.length <= MAX_TOKEN_LENGTH && /^[A-Za-z0-9_-]+$/.test(u.token) && ['admin', 'manager', 'field', 'viewer'].includes(u.role) && Array.isArray(u.markets));
 }
 export const authConfigured = env => configuredUsers(env).length > 0;
 export async function actorForToken(env, token) {
-  if (typeof token !== 'string' || token.length < 32 || token.length > 512) return null;
+  if (typeof token !== 'string' || token.length < MIN_TOKEN_LENGTH || token.length > MAX_TOKEN_LENGTH) return null;
   const hash = await digest(token);
   for (const u of configuredUsers(env)) {
     const expected = await digest(u.token); let diff = 0;
