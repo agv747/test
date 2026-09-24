@@ -21,7 +21,33 @@ export function validateConnection(input, env) {
 const MESSAGES = {
   AI_REDIRECT_BLOCKED: 'The provider returned a redirect. Use the approved API endpoint; credentials were not forwarded.', AI_AUTH_FAILED: 'The provider rejected the credential or account permission.', AI_RATE_LIMITED: 'The provider rate limit was reached.', AI_MODEL_UNAVAILABLE: 'The model or endpoint is unavailable.', AI_IMAGE_UNSUPPORTED: 'The model rejected the image task or request format.', AI_REFUSED: 'The provider refused this request. No fallback was used.', AI_TIMEOUT: 'The provider request timed out.', AI_NETWORK_ERROR: 'The provider could not be reached.', AI_RESPONSE_TRUNCATED: 'The provider stopped before returning a complete result.',
 };
-export function providerError(code, details = {}) { return Object.assign(new DomainError(code, MESSAGES[code] ?? 'Recognition failed.', 502), { retryable: ['AI_RATE_LIMITED', 'AI_NETWORK_ERROR', 'AI_MODEL_UNAVAILABLE'].includes(code), ...details }); }
+/**
+ * What to do about a failing status, in our own words.
+ *
+ * One code covers two unrelated situations: 404 means this model id is not there for this key,
+ * 5xx means the provider is down. The fix differs completely, and "The model or endpoint is
+ * unavailable." leaves the reader unable to tell which they have — the state a real Gemini 404
+ * on a hand-typed model id puts them in.
+ *
+ * The provider's own sentence would say it better, and it is deliberately not used: AI-09 fixes
+ * that no part of a provider response body may reach a message, because a provider can echo a
+ * secret back. So the hint is written here and keyed only by status — nothing crosses over from
+ * the response.
+ */
+const STATUS_HINT = {
+  404: 'Check the exact model id: open AI settings, refresh the model list for this connection and choose from it rather than typing the id.',
+  429: 'Wait for the provider limit to reset, or route this task to another model.',
+  401: 'Check the API key for this connection, and that the account may use this model.',
+  403: 'Check the API key for this connection, and that the account may use this model.',
+};
+function statusHint(status) { return STATUS_HINT[status] ?? (status >= 500 ? 'This is an outage on the provider side; the run is retried automatically.' : null); }
+export function providerError(code, details = {}) {
+  const { hint = null, ...rest } = details;
+  const base = MESSAGES[code] ?? 'Recognition failed.';
+  return Object.assign(new DomainError(code, hint ? `${base} ${hint}` : base, 502), {
+    retryable: ['AI_RATE_LIMITED', 'AI_NETWORK_ERROR', 'AI_MODEL_UNAVAILABLE'].includes(code), ...rest,
+  });
+}
 function headers(connection, credential) {
   const h = { 'content-type': 'application/json' };
   if (connection.provider === 'gemini') h['x-goog-api-key'] = credential;
@@ -38,7 +64,7 @@ export async function providerFetch(connection, credential, suffix, { body, time
     if (response.status >= 300 && response.status < 400) throw providerError('AI_REDIRECT_BLOCKED', { httpStatus: response.status, durationMs: Date.now() - start });
     const retryHeader = response.headers.get('retry-after');
     const retryAfterMs = retryHeader ? (/^\d+(\.\d+)?$/.test(retryHeader) ? Number(retryHeader) * 1000 : Math.max(0, Date.parse(retryHeader) - Date.now())) : 2000;
-    if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start });
+    if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start, hint: statusHint(response.status) });
     const text = await response.text();
     requireThat(text.length <= 2000000, 'AI_INVALID_OUTPUT', 'The provider response exceeded the output limit.');
     let data; try { data = JSON.parse(text); } catch { throw new DomainError('AI_INVALID_OUTPUT', 'The provider returned a non-JSON response.'); }

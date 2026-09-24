@@ -58,6 +58,16 @@ test('AI-09: errors are typed; only transient transport failures are retryable',
   await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', { timeoutMs: 10, fetchImpl: (_url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))) }), { code: 'AI_TIMEOUT' });
   assert.throws(() => parseProviderResponse('gemini', 'gemini', { promptFeedback: { blockReason: 'SAFETY' } }), e => e.code === 'AI_REFUSED' && !e.retryable);
 });
+test('a failing status says what to do about it, without echoing the response', async () => {
+  const body = 'provider may echo a secret here';
+  const expect = { 404: /refresh the model list/i, 500: /outage on the provider side/i, 429: /limit to reset/i, 401: /Check the API key/i };
+  for (const [status, pattern] of Object.entries(expect)) {
+    await assert.rejects(
+      () => providerFetch(conn('gemini'), 'fixture-key', '/models', { fetchImpl: async () => new Response(body, { status: Number(status) }) }),
+      e => pattern.test(e.message) && !e.message.includes('echo'),
+      `status ${status} should carry its own hint and never the body`);
+  }
+});
 test('AI-10/18: invalid IDs, malformed boxes, unknown fields and incomplete responses fail', () => {
   assert.equal(validateOutput(output(), input).products.length, 2);
   for (const mutate of [o => { o.products[0].skuCandidateId = 'invented'; }, o => { o.products[0].imageId = 'another-outlet'; }, o => { o.products[0].bbox = [.9, 0, .5, 1]; }, o => { o.products[0].slotKeyCandidate = 'R99C1'; }, o => { o.adherence = 100; }, o => { o.products[0].score = 90; }]) { const bad = output(); mutate(bad); assert.throws(() => validateOutput(bad, input), { code: 'AI_INVALID_OUTPUT' }); }
