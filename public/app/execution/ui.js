@@ -70,6 +70,24 @@ function grid(plan, slots, expected = false) {
     return `<button class="rei-cell rei-cell--${status}${state.selectedSlot === s.key ? ' is-selected' : ''}" data-action="tw-select-slot" data-slot="${esc(s.key)}" aria-label="${esc(s.key)} ${expected ? 'expected' : status} ${esc(id ?? actual?.state ?? '')}" style="--sku-color:${COLORS[id] ?? '#6d7d87'}"><small>${s.key}</small><span class="rei-pack">${s.active ? esc(id?.replace('TW-', '') ?? (actual?.state === 'empty' ? '∅' : '?')) : '—'}</span><b>${expected ? esc(id ?? 'N/A') : `${symbol} ${status === 'unknown' ? actual?.proposed ? 'Review' : 'Unknown' : status === 'pass' ? 'Correct' : status === 'fail' ? 'Deviation' : 'N/A'}`}</b></button>`;
   }).join('')}</div>`;
 }
+/**
+ * Why "Analyze with real model" is unavailable, in the words of the thing that is missing.
+ *
+ * The button is gated on three independent conditions, and the screen used to report all of
+ * them as "Real model not configured." That reading is wrong for the most common case by far:
+ * a visitor in the demo workspace has not configured anything badly, they simply are not
+ * signed in — `refreshAi()` returns null without an actor, so there is no route to find. Being
+ * told the model is misconfigured sends them to look at provider settings they cannot even
+ * open, instead of at the sign-in that would actually unblock them.
+ *
+ * Reported in gating order, because that is the order they have to be fixed in.
+ */
+function analyzeBlocker(mode, route, capture) {
+  if (mode !== 'shared') return 'Available in the private workspace. Sign in to send photographs to a real model.';
+  if (!route) return 'No model is routed to Taiwan planogram recognition yet.';
+  if (!capture.images.length) return 'Add at least one photograph first.';
+  return 'New proposals require review before submission.';
+}
 function renderAudit(w, ctx) {
   const cap = w.captures.find(c => c.id === ctx.params.id);
   if (!cap) return '<div class="card">Audit not found. <a href="#/tw/overview">Open overview</a></div>';
@@ -82,7 +100,7 @@ function renderAudit(w, ctx) {
     <div class="card"><div class="rei-card-head"><h3>Evidence & recognition</h3>${badge(client.getExecution().mode === 'demo' ? 'Local demo draft' : 'Uploaded · shared database', 'info')}</div>
     <div class="toolbar rei-wrap">${cap.images.map(i => `<span class="rei-image-chip">${esc(i.name)} <small>${esc(i.range)}</small></span>`).join('') || '<span class="muted">No photographs yet.</span>'}</div>
     ${writable && !cap.reviews.length && cap.images.length < 4 ? `<form class="rei-upload" data-form="tw-upload"><label>Camera / gallery<input type="file" name="image" accept="image/jpeg,image/png,image/webp" ${cap.source === 'camera' ? 'capture="environment"' : ''} required></label><label>Image range<select name="range"><option value="Overview">Overview · all slots</option>${Array.from({ length: f.rows }, (_, i) => `<option value="Row ${i + 1}">Detail · row ${i + 1}</option>`).join('')}<option value="Custom">Custom slot range</option></select></label><label>Custom slots, comma separated<input name="slotKeys" placeholder="R1C1,R1C2" aria-label="Custom image slots"></label><button class="btn" type="submit">Upload & save draft</button></form>` : ''}
-    ${writable ? `<div class="toolbar mt rei-wrap">${cap.mode === 'prepared_demo' && !cap.reviews.length ? button('tw-prepared', 'Load prepared observations', '', 'btn--primary') : ''}${button('tw-analyze', 'Analyze with real model', client.getExecution().mode !== 'shared' || !route || !cap.images.length ? 'disabled' : '', 'btn--primary')}${route && (client.executionActor()?.role !== 'field' || route.fieldOverride) ? `<select id="tw-model" aria-label="Recognition model"><option value="">Use configured default</option>${options((client.getExecution().ai?.models ?? []).filter(m => route.allowedModelIds.includes(m.id)), '')}</select>` : ''}<span class="small muted">${route ? 'New proposals require review before submission.' : 'Real model not configured.'}</span><a class="small" href="#/admin/ai">AI settings</a></div>` : ''}
+    ${writable ? `<div class="toolbar mt rei-wrap">${cap.mode === 'prepared_demo' && !cap.reviews.length ? button('tw-prepared', 'Load prepared observations', '', 'btn--primary') : ''}${button('tw-analyze', 'Analyze with real model', client.getExecution().mode !== 'shared' || !route || !cap.images.length ? 'disabled' : '', 'btn--primary')}${route && (client.executionActor()?.role !== 'field' || route.fieldOverride) ? `<select id="tw-model" aria-label="Recognition model"><option value="">Use configured default</option>${options((client.getExecution().ai?.models ?? []).filter(m => route.allowedModelIds.includes(m.id)), '')}</select>` : ''}<span class="small muted">${analyzeBlocker(client.getExecution().mode, route, cap)}</span><a class="small" href="#/admin/ai">AI settings</a></div>` : ''}
     ${state.run ? `<div class="rei-notice"><strong>${esc(state.run.modelName ?? 'Recognition')} · ${esc(state.run.state)}</strong><span> ${esc(state.run.remoteModelId ?? '')}${state.run.durationMs ? ` · ${(state.run.durationMs / 1000).toFixed(1)} s` : ''}</span>${state.run.error ? `<p>${esc(state.run.error.message)}</p>` : ''}${state.run.state === 'needs_review' && state.run.result ? button('tw-use-proposal', 'Use as a new review proposal', '', 'btn--sm') : ''}${state.run.fallbackRunId ? button('tw-show-fallback', 'Inspect fallback run', `data-run-id="${esc(state.run.fallbackRunId)}"`, 'btn--sm') : ''}</div>` : ''}</div>
     ${plan ? `<div class="rei-mobile-tabs"><button data-action="tw-audit-tab" data-tab="expected" class="${state.mobileTab === 'expected' ? 'active' : ''}">Expected</button><button data-action="tw-audit-tab" data-tab="photo" class="${state.mobileTab === 'photo' ? 'active' : ''}">Photo</button><button data-action="tw-audit-tab" data-tab="differences" class="${state.mobileTab === 'differences' ? 'active' : ''}">Differences</button></div>
     <div class="rei-audit-layout"><section class="card rei-pane ${state.mobileTab === 'expected' ? 'mobile-active' : ''}"><div class="rei-card-head"><h3>Approved reference</h3><span class="small muted">${plan.rows} rows × ${plan.columns} slots</span></div>${grid(plan, state.slots, true)}<div class="rei-legend"><span>Rows: top → bottom</span><span>Slots: left → right</span></div></section>
