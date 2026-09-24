@@ -92,16 +92,36 @@
 .rei-assessment-bar span { font-size:.71rem; color:#647c6d; }
 .rei-audit-layout { display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start; }
 .rei-audit-layout > * { min-width:0; }
-.rei-grid { display:grid; grid-template-columns:repeat(var(--columns),minmax(32px,1fr)); gap:5px; padding:8px 0; overflow:auto; }
-.rei-cell { border:1px solid #d3ddd7; border-radius:6px; background:#f5f8f5; padding:7px 2px 6px; text-align:center; cursor:pointer; font:inherit; display:flex; flex-direction:column; align-items:center; gap:5px; min-width:0; }
-.rei-cell > small { font-size:.52rem; color:#69796d; }
-.rei-cell > b { font-size:.5rem; color:#536b58; font-weight:650; white-space:nowrap; }
-.rei-pack { height:41px; width:25px; display:flex; align-items:center; justify-content:center; background:var(--sku-color); color:#fff; font-size:.75rem; font-weight:650; border-radius:3px; border:1px solid #ffffff90; box-shadow:0 1px 2px #0002; }
+/* Owner colours: categorical slots 1-3 of the validated palette (all-pairs, light surface).
+   Five owners cannot clear the colourblind floors at once, so PMI, BAT and Imperial share one
+   hue and are told apart by the name printed in the cell. */
+.rei-grid { display:grid; grid-template-columns:repeat(var(--columns),minmax(68px,1fr)); gap:4px; padding:8px 0; overflow-x:auto; overscroll-behavior-x:contain; }
+.rei-cell[data-owner="own"]   { --owner-color:#2a78d6; }
+.rei-cell[data-owner="ttl"]   { --owner-color:#eb6834; }
+.rei-cell[data-owner="other"] { --owner-color:#1baf7a; }
+.rei-cell[data-owner="none"]  { --owner-color:#c2cbc6; }
+.rei-owner-legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:12px; font-size:.68rem; color:#4c5a51; }
+.rei-owner-key { display:inline-flex; align-items:center; gap:6px; }
+.rei-owner-key > i { width:13px; height:13px; border-radius:3px; background:var(--owner-color); border:1px solid #0000001a; }
+.rei-owner-key > i[data-owner="own"]   { --owner-color:#2a78d6; }
+.rei-owner-key > i[data-owner="ttl"]   { --owner-color:#eb6834; }
+.rei-owner-key > i[data-owner="other"] { --owner-color:#1baf7a; }
+.rei-owner-key > i[data-owner="none"]  { --owner-color:#c2cbc6; }
+.rei-cell { border:1px solid #d3ddd7; border-radius:6px; background:#f5f8f5; padding:5px 4px 6px; text-align:center; cursor:pointer; font:inherit; display:flex; flex-direction:column; align-items:stretch; gap:3px; min-width:0; overflow:hidden; }
+.rei-cell__key { font-size:.55rem; color:#89988f; letter-spacing:.02em; }
+/* Every line truncates rather than escaping its cell: a thirty-column grid has no room for
+   an overflowing label, and the full product name is on the button's title and in the editor. */
+.rei-cell__brand, .rei-cell__variant, .rei-cell__verdict { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rei-cell__brand { font-size:.63rem; font-weight:650; color:#2b3a30; line-height:1.15; }
+.rei-cell__variant { font-size:.55rem; color:#69796d; line-height:1.15; min-height:.7rem; }
+.rei-cell__verdict { font-size:.55rem; font-weight:650; color:#536b58; margin-top:1px; }
+.rei-pack { height:22px; width:100%; display:flex; align-items:center; justify-content:center; background:var(--owner-color); color:#fff; font-size:.8rem; font-weight:650; border-radius:3px; box-shadow:inset 0 0 0 1px #ffffff55; }
 .rei-cell--pass { background:#eaf5eb; border-color:#bfdbc4; }
 .rei-cell--fail { background:#ffefec; border-color:#eac0b9; }
 .rei-cell--fail b { color:#a1463e; }
 .rei-cell--unknown { background:#f0f1f3; border-color:#d6dbe0; }
 .rei-cell--unknown .rei-pack { background:#9aa7ad; }
+.rei-cell--fail { box-shadow:inset 0 0 0 1px #eac0b9; }
 .rei-cell--not_applicable { opacity:.5; }
 .rei-cell.is-selected { outline:2px solid #416f9c; outline-offset:1px; }
 .rei-photo { position:relative; width:100%; border-radius:7px; overflow:hidden; background:#e9eeeb; }
@@ -137,6 +157,6 @@
 .rei-json { white-space:pre-wrap; overflow-wrap:anywhere; max-height:340px; overflow:auto; font-size:.7rem; border-radius:6px; padding:15px; background:#f2f6f3; }
 .rei details { margin-top:16px; font-size:.8rem; }
 .rei details summary { cursor:pointer; }
-@media (min-width:1600px) { .rei-cell > small { font-size:.63rem; }.rei-cell > b { font-size:.6rem; }.rei-pack { width:34px; height:49px; } }
+@media (min-width:1600px) { .rei-cell__key { font-size:.6rem; }.rei-cell__brand { font-size:.7rem; }.rei-cell__variant, .rei-cell__verdict { font-size:.6rem; }.rei-pack { height:26px; } }
 @media (max-width:1100px) { .rei-kpis { gap:10px; }.rei-kpi { padding:16px 12px; }.rei-kpi strong { font-size:2.1rem; }.rei-scope { flex-wrap:wrap; }.rei-audit-layout { grid-template-columns:1fr; gap:0; }.rei-upload { grid-template-columns:1fr 1fr; }.rei-provider-cards { grid-template-columns:repeat(2,1fr); }.rei .card { padding:18px; }.rei-table td { padding:13px 9px; }.rei-access { gap:25px; } }
-@media (max-width:700px) { .rei-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }.rei-kpi { min-height:155px; }.rei-kpi b { font-size:.71rem; }.rei-kpi small { font-size:.62rem; }.rei-kpi > span { font-size:.72rem; }.rei-heading { flex-direction:column; align-items:flex-start; gap:10px; margin:22px 0 18px; }.rei h2 { font-size:1.18rem; }.rei-scope > div:first-child { gap:7px; }.rei-scope > div:first-child > span:last-child { font-size:.66rem; }.rei-filters { display:grid; grid-template-columns:1fr 1fr; }.rei-filters > label { min-width:0; }.rei-table { min-width:680px; }.rei-callout { flex-direction:column; gap:5px; }.rei .card { padding:15px; }.rei-assessment-bar { padding:15px; gap:16px; }.rei-assessment-bar > div { width:43%; }.rei-assessment-bar strong { font-size:1.6rem; }.rei-form-grid { grid-template-columns:1fr; gap:15px; }.rei-slot-editor { grid-template-columns:1fr; gap:15px; }.rei-slot-editor > div:first-child { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }.rei-slot-editor .rei-crop { width:85px; height:105px; }.rei-slot-editor .rei-step { width:100%; }.rei-grid { gap:3px; }.rei-cell { padding:6px 1px; }.rei-cell > b { font-size:.42rem; }.rei-cell > small { font-size:.46rem; }.rei-pack { width:22px; height:35px; }.rei-upload { grid-template-columns:1fr; }.rei-access { grid-template-columns:1fr; gap:10px; }.rei-tabs { gap:0; }.rei-tabs button { padding:11px 12px; font-size:.74rem; }.rei-provider-cards { grid-template-columns:1fr 1fr; gap:10px; }.rei-provider-cards .card { padding:15px; }.rei-provider-cards h3 { font-size:.88rem; }.rei-provider-cards p { font-size:.7rem; }.rei-mobile-tabs { display:flex; }.rei-pane { display:none; }.rei-pane.mobile-active { display:block; }.rei-busy { bottom:80px; }.rei-footnote { margin-bottom:20px !important; } }
+@media (max-width:700px) { .rei-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }.rei-kpi { min-height:155px; }.rei-kpi b { font-size:.71rem; }.rei-kpi small { font-size:.62rem; }.rei-kpi > span { font-size:.72rem; }.rei-heading { flex-direction:column; align-items:flex-start; gap:10px; margin:22px 0 18px; }.rei h2 { font-size:1.18rem; }.rei-scope > div:first-child { gap:7px; }.rei-scope > div:first-child > span:last-child { font-size:.66rem; }.rei-filters { display:grid; grid-template-columns:1fr 1fr; }.rei-filters > label { min-width:0; }.rei-table { min-width:680px; }.rei-callout { flex-direction:column; gap:5px; }.rei .card { padding:15px; }.rei-assessment-bar { padding:15px; gap:16px; }.rei-assessment-bar > div { width:43%; }.rei-assessment-bar strong { font-size:1.6rem; }.rei-form-grid { grid-template-columns:1fr; gap:15px; }.rei-slot-editor { grid-template-columns:1fr; gap:15px; }.rei-slot-editor > div:first-child { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }.rei-slot-editor .rei-crop { width:85px; height:105px; }.rei-slot-editor .rei-step { width:100%; }.rei-grid { gap:3px; }.rei-cell { padding:6px 1px; }.rei-cell__brand { font-size:.55rem; }.rei-cell__variant, .rei-cell__verdict { font-size:.48rem; }.rei-cell__key { font-size:.46rem; }.rei-pack { height:18px; }.rei-upload { grid-template-columns:1fr; }.rei-access { grid-template-columns:1fr; gap:10px; }.rei-tabs { gap:0; }.rei-tabs button { padding:11px 12px; font-size:.74rem; }.rei-provider-cards { grid-template-columns:1fr 1fr; gap:10px; }.rei-provider-cards .card { padding:15px; }.rei-provider-cards h3 { font-size:.88rem; }.rei-provider-cards p { font-size:.7rem; }.rei-mobile-tabs { display:flex; }.rei-pane { display:none; }.rei-pane.mobile-active { display:block; }.rei-busy { bottom:80px; }.rei-footnote { margin-bottom:20px !important; } }
