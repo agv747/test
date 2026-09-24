@@ -37,7 +37,7 @@ test('AI-03/04: all four provider adapters send native image and structured-outp
   }
   const r = buildProviderRequest({ ...conn('openai_compatible'), protocol: 'chat_completions' }, model, input, {});
   assert.equal(r.suffix, '/chat/completions'); assert.equal(r.body.messages[0].content[1].type, 'image_url');
-  const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl: async (url, options) => { assert.equal(new URL(url).host, 'generativelanguage.googleapis.com'); assert.equal(options.headers['x-goog-api-key'], 'fixture-key'); assert.equal(options.redirect, 'error'); return Response.json(geminiResponse(output()), { headers: { 'x-request-id': 'req-fixture' } }); } });
+  const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl: async (url, options) => { assert.equal(new URL(url).host, 'generativelanguage.googleapis.com'); assert.equal(options.headers['x-goog-api-key'], 'fixture-key'); assert.equal(options.redirect, 'manual'); return Response.json(geminiResponse(output()), { headers: { 'x-request-id': 'req-fixture' } }); } });
   assert.equal(response.resolvedModelId, 'fixture-resolved'); assert.equal(response.requestId, 'req-fixture'); assert.equal(response.result.products.length, 2);
 });
 test('AI-05: model listing is paginated and carries no assumed capability', async () => {
@@ -112,4 +112,20 @@ test('AI-10: a single schema repair is recorded and a second invalid response fa
 test('Durable image chunks reconstruct exact original bytes', async () => {
   const DB = sqliteD1(); await initDb(DB); const bytes = new Uint8Array(300000); for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
   await saveMedia(DB, 'private-image', bytes); assert.deepEqual(await readMedia(DB, 'private-image'), bytes); DB.close();
+});
+
+
+test('Provider requests use Workers-compatible manual redirects and never forward credentials', async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    let calls = 0;
+    await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', {
+      fetchImpl: async (url, options) => {
+        calls++;
+        assert.equal(new URL(url).host, 'generativelanguage.googleapis.com');
+        assert.equal(options.redirect, 'manual');
+        return new Response(null, { status, headers: { location: 'https://untrusted.example/key' } });
+      }
+    }), e => e.code === 'AI_REDIRECT_BLOCKED' && e.retryable === false && !e.message.includes('fixture-key'));
+    assert.equal(calls, 1);
+  }
 });

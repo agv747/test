@@ -19,7 +19,7 @@ export function validateConnection(input, env) {
   return { ...input, baseUrl: base };
 }
 const MESSAGES = {
-  AI_AUTH_FAILED: 'The provider rejected the credential or account permission.', AI_RATE_LIMITED: 'The provider rate limit was reached.', AI_MODEL_UNAVAILABLE: 'The model or endpoint is unavailable.', AI_IMAGE_UNSUPPORTED: 'The model rejected the image task or request format.', AI_REFUSED: 'The provider refused this request. No fallback was used.', AI_TIMEOUT: 'The provider request timed out.', AI_NETWORK_ERROR: 'The provider could not be reached.', AI_RESPONSE_TRUNCATED: 'The provider stopped before returning a complete result.',
+  AI_REDIRECT_BLOCKED: 'The provider returned a redirect. Use the approved API endpoint; credentials were not forwarded.', AI_AUTH_FAILED: 'The provider rejected the credential or account permission.', AI_RATE_LIMITED: 'The provider rate limit was reached.', AI_MODEL_UNAVAILABLE: 'The model or endpoint is unavailable.', AI_IMAGE_UNSUPPORTED: 'The model rejected the image task or request format.', AI_REFUSED: 'The provider refused this request. No fallback was used.', AI_TIMEOUT: 'The provider request timed out.', AI_NETWORK_ERROR: 'The provider could not be reached.', AI_RESPONSE_TRUNCATED: 'The provider stopped before returning a complete result.',
 };
 export function providerError(code, details = {}) { return Object.assign(new DomainError(code, MESSAGES[code] ?? 'Recognition failed.', 502), { retryable: ['AI_RATE_LIMITED', 'AI_NETWORK_ERROR', 'AI_MODEL_UNAVAILABLE'].includes(code), ...details }); }
 function headers(connection, credential) {
@@ -33,7 +33,9 @@ function headers(connection, credential) {
 export async function providerFetch(connection, credential, suffix, { body, timeoutMs = 60000, fetchImpl = fetch } = {}) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs), start = Date.now();
   try {
-    const response = await fetchImpl(`${connection.baseUrl}${suffix}`, { method: body ? 'POST' : 'GET', headers: headers(connection, credential), ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'error', signal: controller.signal });
+    const response = await fetchImpl(`${connection.baseUrl}${suffix}`, { method: body ? 'POST' : 'GET', headers: headers(connection, credential), ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'manual', signal: controller.signal });
+    // Workers rejects redirect: 'error'. Never follow redirects with provider credentials.
+    if (response.status >= 300 && response.status < 400) throw providerError('AI_REDIRECT_BLOCKED', { httpStatus: response.status, durationMs: Date.now() - start });
     const retryHeader = response.headers.get('retry-after');
     const retryAfterMs = retryHeader ? (/^\d+(\.\d+)?$/.test(retryHeader) ? Number(retryHeader) * 1000 : Math.max(0, Date.parse(retryHeader) - Date.now())) : 2000;
     if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start });
