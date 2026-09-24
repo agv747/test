@@ -44,10 +44,11 @@ test('AI-05: model listing is paginated and carries no assumed capability', asyn
   const page = await listProviderModels(conn('gemini'), 'fixture-key', 'token with spaces', { fetchImpl: async url => { assert.match(url, /pageToken=token%20with%20spaces/); return Response.json({ models: [{ name: 'models/a', displayName: 'A' }], nextPageToken: 'next' }); } });
   assert.equal(page.models[0].remoteModelId, 'a'); assert.equal(page.nextCursor, 'next'); assert.equal(page.models[0].capabilities, undefined);
 });
-test('AI-06: text-only/unverified, disabled and wrong-market models cannot enter routes', () => {
+test('AI-06: optional probes do not block selection; disabled and wrong-market models are rejected', () => {
   const route = { defaultModelId: model.id, allowedModelIds: [model.id], timeoutMs: 60000, maxOutputTokens: 8192 }, c = { ...conn('gemini'), credentialConfigured: true }, m = { ...model, connectionId: c.id };
   assert.equal(validateRoute(route, [m], [c], 'TW', TASK_TW).fallbackModelId, null);
-  for (const bad of [{ ...m, capabilities: {} }, { ...m, enabled: false }]) assert.throws(() => validateRoute(route, [bad], [c], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
+  assert.equal(validateRoute(route, [{ ...m, capabilities: {} }], [c], 'TW', TASK_TW).defaultModelId, m.id);
+  for (const bad of [{ ...m, enabled: false }]) assert.throws(() => validateRoute(route, [bad], [c], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
   assert.throws(() => validateRoute(route, [m], [{ ...c, allowedMarkets: ['SG'] }], 'TW', TASK_TW), { code: 'AI_MODEL_NOT_ALLOWED' });
 });
 test('AI-09: errors are typed; only transient transport failures are retryable', async () => {
@@ -128,4 +129,26 @@ test('Provider requests use Workers-compatible manual redirects and never forwar
     }), e => e.code === 'AI_REDIRECT_BLOCKED' && e.retryable === false && !e.message.includes('fixture-key'));
     assert.equal(calls, 1);
   }
+});
+
+test('Browser process requests do not own provider calls; scheduled jobs execute once', async t => {
+  const { handleExecution } = await import('../server/execution/api.js');
+  const DB = sqliteD1(), token = 'fixture_admin_token_for_scheduled_jobs_123456';
+  const env = { DB, ADMIN_ACCESS_TOKEN: token, GEMINI_API_KEY: 'fixture-key' }, actor = { id: 'admin', role: 'admin', markets: ['TW'] };
+  const selection = { model, connection: { ...conn('gemini'), credentialSource: 'environment' }, route: { timeoutMs: 1000, maxOutputTokens: 8192 }, task: TASK_TW, market: 'TW' };
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(geminiResponse(output())); });
+  try {
+    const run = await enqueueRun(env, actor, input, selection, { idempotencyKey: 'scheduled-regression' });
+    const response = await handleExecution(new Request(`https://app.example/api/execution/ai/runs/${run.id}/process`, { method: 'POST', headers: { origin: 'https://app.example', cookie: `rei_session=${token}` } }), env);
+    assert.equal(response.status, 202); assert.equal(calls, 0);
+    assert.equal((await readRun(env, actor, run.id)).state, 'queued');
+    await processDueJobs(env);
+    assert.equal((await readRun(env, actor, run.id)).state, 'needs_review'); assert.equal(calls, 1);
+    await processDueJobs(env); assert.equal(calls, 1);
+    const interrupted = await enqueueRun(env, actor, input, selection, { idempotencyKey: 'interrupted-regression' });
+    await DB.prepare("UPDATE rei_jobs SET status='processing',lease_token='expired',lease_until=1 WHERE id=?").bind(interrupted.id).run();
+    await processDueJobs(env);
+    assert.equal((await readRun(env, actor, interrupted.id)).error.code, 'AI_INTERRUPTED'); assert.equal(calls, 1);
+  } finally { DB.close(); }
 });

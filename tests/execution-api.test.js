@@ -56,7 +56,8 @@ test('AI-07/08: field override is denied; server settings and market defaults st
   const m = (await f.request('/ai/models', { connectionId: c.id, remoteModelId: 'fixture-model-only', displayName: 'Fixture model', maxOutputTokens: 8192, enabled: true, structuredOutput: true })).body.model;
   assert.deepEqual(m.capabilities, {});
   const route = { expectedRevision: 0, defaultModelId: m.id, allowedModelIds: [m.id], timeoutMs: 60000, maxOutputTokens: 8192, fieldOverride: false };
-  assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).body.error.code, 'AI_MODEL_NOT_ALLOWED');
+  assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).status, 200);
+  route.expectedRevision = 1;
   const stored = await readRecord(f.DB, 'model', m.id); stored.data.capabilities = { [TASK_TW]: { state: 'verified' }, [TASK_SG]: { state: 'verified' } }; await writeRecord(f.DB, 'model', m.id, stored.data, stored.revision);
   assert.equal((await f.request(`/ai/routes/TW/${TASK_TW}`, route, { method: 'PUT' })).status, 200);
   assert.equal((await readRecord(f.DB, 'route', TASK_SG)), null);

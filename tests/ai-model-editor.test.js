@@ -38,3 +38,30 @@ test('Model editing is isolated from image polling and failed saves preserve fie
   html = ui.render(ctx); assert.ok(html.includes('value="My unsaved name"')); assert.ok(html.includes('value="4096"'));
   ctx.params.tab = 'checks'; html = ui.render(ctx); assert.ok(html.includes('data-action="ai-test-model"'));
 });
+
+test('Simple setup selects a model without probes or advanced routing fields', async t => {
+  let saved, enabled = false;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['TW'] } });
+    if (url.endsWith('/ai/state')) return Response.json({ models: [{ id: 'm2', connectionId: 'c2', displayName: 'Gemini fixture', remoteModelId: 'fixture', enabled, revision: 1, maxOutputTokens: 4096 }], connections: [{ id: 'c2', name: 'Gemini', enabled: true, credentialConfigured: true, allowedMarkets: ['TW'] }], routes: [] });
+    if (url.endsWith('/ai/models/m2')) { enabled = true; assert.equal(JSON.parse(options.body).enabled, true); return Response.json({}); }
+    if (url.includes('/ai/routes/')) { saved = JSON.parse(options.body); return Response.json({}); }
+    throw new Error(`Unexpected request ${url}`);
+  });
+  const oldStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  t.after(() => { globalThis.localStorage = oldStorage; });
+  const client = await import('../public/app/execution/client.js');
+  const ui = await import('../public/app/execution/ui-ai.js');
+  await client.initExecution();
+  const ctx = { params: { tab: 'setup' } };
+  const html = ui.render(ctx);
+  assert.match(html, /Models for recognition/); assert.match(html, /Gemini fixture/);
+  assert.ok(!html.includes('name="timeoutSeconds"')); assert.ok(!html.includes('name="allowedModelIds"'));
+  assert.ok(!html.includes('data-action="ai-test-model"')); assert.ok(!html.includes('runPanel'));
+  t.mock.method(globalThis, 'FormData', function () { return { get: k => k === 'modelId' ? 'm2' : null }; });
+  await ui.onSubmit({ dataset: { form: 'ai-default', market: 'TW', task: 'tw_planogram_recognition' } }, ctx);
+  assert.equal(enabled, true); assert.equal(saved.defaultModelId, 'm2'); assert.deepEqual(saved.allowedModelIds, ['m2']);
+  assert.equal(saved.maxOutputTokens, 4096); assert.equal(saved.fieldOverride, false); assert.equal(saved.fallbackModelId, null);
+  assert.match(ui.render(ctx), /Model saved/);
+});

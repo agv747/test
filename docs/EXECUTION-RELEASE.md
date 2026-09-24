@@ -45,3 +45,13 @@ Taiwan private operational state uses a revision-controlled D1 JSON record cappe
 Compatible endpoints are deployment-allowlisted and reject literal private IPs and redirects. Network-level egress controls are recommended before accepting arbitrary customer-managed endpoints. Billing may be unknown after provider interruptions; the UI must not imply zero cost.
 
 Singapore retains the existing price-rule semantics, including the legacy “Either measure” OR mode. Changing this to an AND policy requires a separate agreed rules migration. Existing Cloudflare operational history is retained in `CLOUDFLARE.md`; the authentication and lazy migration changes above supersede the corresponding older statements.
+
+## Simplified AI settings (September 24 update)
+
+The default AI screen now has provider connections and one saved model per module. Selecting and saving a discovered model enables it and saves the task default; manual allowlists, fallback models, output limits, optional image probes and comparisons are under Advanced settings. Saving from the simple screen replaces that module's allowlist with the selected model and clears fallback/field override. Existing settings are unchanged until Save is pressed.
+
+Synthetic image capability probes are optional diagnostics, not a prerequisite for selecting a model. Selection still checks administrator rights, market authorization, enabled status, configured credentials and output limits. Actual image requests still validate the provider response and require human review; saving a model does not assert image capability or recognition accuracy.
+
+Provider execution is owned exclusively by the scheduled worker (the existing `* * * * *` Cron Trigger), not browser HTTP requests. The legacy `/ai/runs/:id/process` endpoint is an authorized status acknowledgment (202 while pending). Ensure the Cron Trigger is enabled when deploying; normal idle-queue startup takes up to a minute, and backlog/retries can take longer. Reloading or closing the browser does not cancel scheduled execution. Interrupted jobs whose provider response is unknown remain failed and are never automatically replayed. Old failed jobs are not rewritten by this update.
+
+This removes a code path in which a browser disconnect could cancel execution; it does not establish the exact cause of a previous production interruption without Worker logs. Live provider and Cron verification are required after deployment.
