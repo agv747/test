@@ -47,7 +47,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DEPLOY_SHA: ${{ steps.release.outputs.sha }}
           WRANGLER_SEND_METRICS: 'false'
-        run: npx --yes wrangler@4.136.1 deploy --config wrangler.toml --keep-vars --var "DEPLOY_COMMIT:$DEPLOY_SHA"
+        run: |
+          # Bake the release stamp into the bundle. A deploy that passes --var sends a
+          # binding mutation to a Worker whose bindings include the provider API keys;
+          # this deploy carries code and assets only.
+          printf 'export const BUILD_SHA = \x27%s\x27;\n' "$DEPLOY_SHA" > build-info.js
+          npx --yes wrangler@4.136.1 deploy --config wrangler.toml --keep-vars
       - name: Verify active API version
         env:
           EXPECTED_COMMIT: ${{ steps.release.outputs.sha }}

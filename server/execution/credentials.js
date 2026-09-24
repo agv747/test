@@ -15,7 +15,11 @@ export async function encryptCredential(env, secret, connectionId) {
 export async function getCredential(env, connection) {
   if (connection.credentialSource === 'environment') {
     const secret = env[ENV_KEYS[connection.provider]];
-    requireThat(secret, 'AI_NOT_CONFIGURED', 'The provider environment secret is not configured.', 503); return secret;
+    // Name the variable and where it lives. "Not configured" sent the last reader to re-check
+    // settings inside the app, where nothing was wrong: the value is a Worker secret, and the
+    // app can only report its absence, never set it.
+    requireThat(secret, 'AI_NOT_CONFIGURED', `This connection reads its key from the Worker secret ${ENV_KEYS[connection.provider] ?? 'for this provider'}, which is not set on the deployment. Add it under Workers & Pages → price-check → Settings → Variables and Secrets, or switch the connection to a stored key.`, 503);
+    return secret;
   }
   requireThat(connection.encryptedCredential, 'AI_NOT_CONFIGURED', 'Configure a credential for this connection.', 503);
   const encrypted = connection.encryptedCredential;

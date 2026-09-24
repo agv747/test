@@ -162,3 +162,18 @@ test('Browser process requests do not own provider calls; scheduled jobs execute
     assert.equal((await readRun(env, actor, interrupted.id)).error.code, 'AI_INTERRUPTED'); assert.equal(calls, 1);
   } finally { DB.close(); }
 });
+
+test('the analyze button names a missing deployment credential before a run is queued', async () => {
+  const { analyzeBlocker } = await import('../public/app/execution/ui.js');
+  const route = { defaultModelId: 'm1' };
+  const capture = { images: [{ id: 'i1' }] };
+  const ai = { models: [{ id: 'm1', connectionId: 'c1' }], connections: [{ id: 'c1', name: 'Gemini', credentialConfigured: false }] };
+  const ok = { ...ai, connections: [{ id: 'c1', name: 'Gemini', credentialConfigured: true }] };
+  assert.match(analyzeBlocker('shared', route, capture, ai), /no key on this deployment/);
+  assert.match(analyzeBlocker('shared', route, capture, ok), /require review/);
+  assert.match(analyzeBlocker('demo', route, capture, ok), /private workspace/);
+  assert.match(analyzeBlocker('shared', null, capture, ok), /Choose a model/);
+  assert.match(analyzeBlocker('shared', route, { images: [] }, ok), /photograph/);
+  // An actor whose /ai/state omits the connection must not be blocked by a guess.
+  assert.match(analyzeBlocker('shared', route, capture, { models: [], connections: [] }), /require review/);
+});

@@ -3,6 +3,7 @@ import { TASK_TW, TASK_SG, compareProposal, proposalToReview } from '../../publi
 import { initDb, readRecord, readWorkspace, writeRecord, listRecords, scopeWorkspace, parseImage, saveMedia, deleteMedia, readMedia, digest } from './storage.js';
 import { getActor, actorForToken, authConfigured, sameOrigin, sessionCookie } from './auth.js';
 import { encryptCredential, getCredential, connectionDto, hasEnvironmentCredential } from './credentials.js';
+import { BUILD_SHA } from '../../build-info.js';
 import { validateConnection, listProviderModels } from './adapters.js';
 import { selectModel, validateRoute, inputForCapture, enqueueRun, readRun, probeInput } from './jobs.js';
 
@@ -40,7 +41,7 @@ async function route(request, env) {
   const url = new URL(request.url), path = url.pathname.replace(/^\/api\/execution/, ''), method = request.method;
   if (!['GET', 'HEAD'].includes(method)) sameOrigin(request);
   if (path === '/session') {
-    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0', buildSha: env.DEPLOY_COMMIT ?? null });
+    if (method === 'GET') return reply({ actor: await getActor(request, env), authConfigured: authConfigured(env), databaseConfigured: Boolean(env.DB), version: '3.0.0', buildSha: BUILD_SHA !== 'development' ? BUILD_SHA : env.DEPLOY_COMMIT ?? null });
     if (method === 'DELETE') return reply({ actor: null }, 200, { 'set-cookie': sessionCookie('', request, true) });
     if (method === 'POST') {
       const p = await bodyJson(request, 3000), actor = await actorForToken(env, p.accessToken);
