@@ -4,19 +4,19 @@ import { digest } from './storage.js';
 /**
  * The shortest token the deployment will accept.
  *
- * Set to 1 at the owner's request, so a short hand-typed token works. What that costs is worth
+ * Set to 3 at the owner's request, so a short hand-typed token works. What that costs is worth
  * stating where the number lives: this token is the only authentication the private workspace
  * has, `sessionCookie` stores it verbatim as the session cookie, and nothing here rate-limits
- * attempts. A three-character token from the 64-character alphabet below is a few hundred
- * thousand guesses — minutes of scripted traffic — and whoever lands it holds an admin session
- * over the shared workspace and the AI credential screens.
+ * attempts. Three characters from the 64-character alphabet below is a few hundred thousand
+ * guesses — minutes of scripted traffic — and whoever lands it holds an admin session over the
+ * shared workspace and the AI credential screens.
  *
  * The other two checks are NOT length policy and must stay. The character class keeps the token
  * safe to place in a `Set-Cookie` header: a value carrying `;`, a comma or a newline would let
  * an attacker forge cookie attributes. The 512 ceiling bounds the work an unauthenticated
  * caller can force per request.
  */
-const MIN_TOKEN_LENGTH = 1;
+const MIN_TOKEN_LENGTH = 3;
 const MAX_TOKEN_LENGTH = 512;
 function configuredUsers(env) {
   let users = [];
