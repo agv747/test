@@ -13,7 +13,7 @@ export function validateRoute(route, models, connections, market, task) {
   requireThat(Number.isInteger(route.timeoutMs) && route.timeoutMs >= 5000 && route.timeoutMs <= 60000 && Number.isInteger(route.maxOutputTokens) && route.maxOutputTokens >= 256 && route.maxOutputTokens <= 32768, 'ROUTE_INVALID', 'Timeout: 5–60 seconds. Output limit: 256–32,768 tokens.');
   for (const id of route.allowedModelIds) {
     const model = models.find(m => m.id === id), connection = connections.find(c => c.id === model?.connectionId);
-    requireThat(model?.enabled && model.capabilities?.[task]?.state === 'verified' && connection?.enabled && connection.credentialConfigured && connection.allowedMarkets.includes(market), 'AI_MODEL_NOT_ALLOWED', 'Every allowed model must be enabled, configured, market-authorized and verified for this image task.');
+    requireThat(model?.enabled && connection?.enabled && connection.credentialConfigured && connection.allowedMarkets.includes(market), 'AI_MODEL_NOT_ALLOWED', 'Every allowed model must be enabled, configured, market-authorized.');
     requireThat(route.maxOutputTokens <= (model.maxOutputTokens ?? 8192), 'ROUTE_INVALID', 'Output limit exceeds a selected model’s configured limit.');
   }
   return { defaultModelId: route.defaultModelId, allowedModelIds: [...new Set(route.allowedModelIds)], fallbackModelId: route.fallbackModelId || null, fieldOverride: route.fieldOverride === true, timeoutMs: route.timeoutMs, maxOutputTokens: route.maxOutputTokens, market, task };
@@ -21,14 +21,14 @@ export function validateRoute(route, models, connections, market, task) {
 export async function selectModel(env, actor, market, task, requestedModelId, purpose = 'audit') {
   authorize(actor, purpose === 'capability' ? 'ai.manage' : purpose === 'comparison' ? 'ai.compare' : 'audit.capture', market);
   const routeRecord = await readRecord(env.DB, 'route', task), route = routeRecord?.data;
-  if (purpose !== 'capability') requireThat(route, 'AI_NOT_CONFIGURED', 'Set a verified model as the market/task default.', 503);
+  if (purpose !== 'capability') requireThat(route, 'AI_NOT_CONFIGURED', 'Choose and save a model in AI settings.', 503);
   if (purpose === 'audit' && requestedModelId && actor.role === 'field') requireThat(route.fieldOverride, 'AI_MODEL_NOT_ALLOWED', 'Field users cannot override this task’s default model.', 403);
   const modelId = requestedModelId ?? route?.defaultModelId;
   if (purpose !== 'capability') requireThat(route.allowedModelIds.includes(modelId), 'AI_MODEL_NOT_ALLOWED', 'This model is not allowed for the selected market/task.', 403);
   const model = (await readRecord(env.DB, 'model', modelId))?.data;
   const connection = model && (await readRecord(env.DB, 'connection', model.connectionId))?.data;
   requireThat(model && connection?.enabled && connection.allowedMarkets.includes(market) && connectionDto(connection, env).credentialConfigured, 'AI_NOT_CONFIGURED', 'The selected connection is disabled, unavailable or not configured.', 503);
-  if (purpose !== 'capability') requireThat(model.enabled && model.capabilities?.[task]?.state === 'verified', 'AI_MODEL_NOT_ALLOWED', 'This model has not passed this image task capability test.', 403);
+  if (purpose !== 'capability') requireThat(model.enabled, 'AI_MODEL_NOT_ALLOWED', 'This model is disabled.', 403);
   validateConnection(connection, env); // Recheck administrator allowlist at enqueue AND execution.
   return { model: structuredClone(model), connection: structuredClone(connection), route: purpose === 'capability' ? { timeoutMs: 60000, maxOutputTokens: Math.min(8192, model.maxOutputTokens), fallbackModelId: null } : structuredClone(route), routeRevision: routeRecord?.revision ?? null, task, market, promptVersion: PROMPT_VERSION, schemaVersion: '1', selectedAt: new Date().toISOString() };
 }
