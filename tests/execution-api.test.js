@@ -32,8 +32,29 @@ test('Credential storage is encrypted and API DTOs are redacted; lack of encrypt
   assert.equal(created.status, 201); const id = created.body.connection.id;
   const row = await readRecord(f.DB, 'connection', id); assert.ok(row.data.encryptedCredential.ciphertext); assert.ok(!JSON.stringify(row).includes(secret));
   const state = await f.request('/ai/state'); assert.ok(!JSON.stringify(state.body).includes(secret)); assert.ok(!JSON.stringify(state.body).includes('ciphertext'));
+  assert.equal(state.body.secretStoreMode, 'worker_secret');
+
+  // Without the Worker secret the store keeps working, because a deployment that cannot see
+  // secrets otherwise has no way to configure a provider at all. The credential is still
+  // encrypted, and the key that encrypts it must never leave through the API.
   delete f.env.AI_CREDENTIALS_ENCRYPTION_KEY;
-  assert.equal((await f.request('/ai/connections', { name: 'No encryption', provider: 'gemini', allowedMarkets: ['TW'], enabled: true, apiKey: secret })).body.error.code, 'AI_SECRET_STORE_UNAVAILABLE'); f.DB.close();
+  const fallback = await f.request('/ai/connections', { name: 'Database mode', provider: 'openai', allowedMarkets: ['TW'], enabled: true, apiKey: secret });
+  assert.equal(fallback.status, 201);
+  const stored = await readRecord(f.DB, 'connection', fallback.body.connection.id);
+  assert.ok(stored.data.encryptedCredential.ciphertext);
+  assert.ok(!JSON.stringify(stored).includes(secret));
+  const degraded = await f.request('/ai/state');
+  assert.equal(degraded.body.secretStoreMode, 'database');
+  const keyRecord = await readRecord(f.DB, 'secret_store', 'ai_credentials');
+  assert.ok(keyRecord.data.key, 'a key is provisioned once and kept');
+  assert.ok(!JSON.stringify(degraded.body).includes(keyRecord.data.key), 'the encryption key must not reach any DTO');
+  // Storing is half the job: the credential must come back out, with no Worker secret in sight.
+  const { getCredential } = await import('../server/execution/credentials.js');
+  assert.equal(await getCredential(f.env, stored.data), secret);
+  // The same key is reused, or half the stored credentials would become undecryptable.
+  await f.request('/ai/connections', { name: 'Second', provider: 'anthropic', allowedMarkets: ['TW'], enabled: true, apiKey: secret });
+  assert.equal((await readRecord(f.DB, 'secret_store', 'ai_credentials')).data.key, keyRecord.data.key);
+  f.DB.close();
 });
 test('API stores original and processed private evidence and rejects another fixture image', async () => {
   const f = fixture(), seed = buildTaiwanDemo();

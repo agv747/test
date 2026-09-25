@@ -1,5 +1,5 @@
 import { requireThat } from '../../public/app/execution/domain.js';
-import { fromBase64, toBase64 } from './storage.js';
+import { fromBase64, toBase64, readRecord, writeRecord } from './storage.js';
 /**
  * Where a provider key may live on the deployment, and how to tell a missing one apart from a
  * misnamed one.
@@ -22,9 +22,37 @@ export function readEnvSecret(env, provider) {
   return null;
 }
 export const hasEnvironmentCredential = (env, provider) => Boolean(readEnvSecret(env, provider));
+const KEY_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+/**
+ * Where the key that encrypts provider credentials comes from, and what each source is worth.
+ *
+ * Two modes, and the difference is not cosmetic. With AI_CREDENTIALS_ENCRYPTION_KEY set, the
+ * key lives in a Worker secret that nothing can read back — not the dashboard, not a database
+ * dump, not this code. Without it, one is generated once and kept in the database beside the
+ * credentials it protects, so anyone who can read D1 can decrypt them. That is obfuscation, not
+ * secrecy, and `secretStoreMode` reports it so no screen can imply otherwise.
+ *
+ * The weaker mode exists because the stronger one stopped being reachable: Worker secrets belong
+ * to a single deployment, and on this account the deployment serving the app could not see any
+ * of them, which left no way to configure a provider at all. A key in the database is shared by
+ * every deployment that shares the database, which is the property that was actually needed.
+ */
+export const secretStoreMode = (env) => (KEY_PATTERN.test(env?.AI_CREDENTIALS_ENCRYPTION_KEY ?? '') ? 'worker_secret' : 'database');
+async function encryptionMaterial(env) {
+  if (KEY_PATTERN.test(env?.AI_CREDENTIALS_ENCRYPTION_KEY ?? '')) return fromBase64(env.AI_CREDENTIALS_ENCRYPTION_KEY);
+  requireThat(env?.DB, 'AI_SECRET_STORE_UNAVAILABLE', 'No database binding, so there is nowhere to keep the encryption key.', 503);
+  const existing = await readRecord(env.DB, 'secret_store', 'ai_credentials');
+  if (existing?.data?.key && KEY_PATTERN.test(existing.data.key)) return fromBase64(existing.data.key);
+  const key = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+  // ON CONFLICT DO NOTHING inside writeRecord at revision 0, so two concurrent writers cannot
+  // end up with different keys and half the credentials undecryptable.
+  await writeRecord(env.DB, 'secret_store', 'ai_credentials', { key, createdAt: new Date().toISOString() }, 0, 'TW').catch(() => {});
+  const settled = await readRecord(env.DB, 'secret_store', 'ai_credentials');
+  requireThat(settled?.data?.key, 'AI_SECRET_STORE_UNAVAILABLE', 'The encryption key could not be stored.', 503);
+  return fromBase64(settled.data.key);
+}
 async function encryptionKey(env) {
-  requireThat(typeof env.AI_CREDENTIALS_ENCRYPTION_KEY === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(env.AI_CREDENTIALS_ENCRYPTION_KEY), 'AI_SECRET_STORE_UNAVAILABLE', 'Configure AI_CREDENTIALS_ENCRYPTION_KEY as a base64-encoded random 32-byte secret before storing API keys.', 503);
-  return crypto.subtle.importKey('raw', fromBase64(env.AI_CREDENTIALS_ENCRYPTION_KEY), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  return crypto.subtle.importKey('raw', await encryptionMaterial(env), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 export async function encryptCredential(env, secret, connectionId) {
   requireThat(typeof secret === 'string' && secret.length >= 8 && secret.length <= 4096 && !/[\r\n]/.test(secret), 'AI_AUTH_FAILED', 'Invalid API key format.');

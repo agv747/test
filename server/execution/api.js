@@ -4,6 +4,7 @@ import { initDb, readRecord, readWorkspace, writeRecord, listRecords, scopeWorks
 import { getActor, actorForToken, authConfigured, sameOrigin, sessionCookie } from './auth.js';
 import { encryptCredential, getCredential, connectionDto, hasEnvironmentCredential } from './credentials.js';
 import { verifyConnection } from './verify.js';
+import { secretStoreMode } from './credentials.js';
 import { BUILD_SHA } from '../../build-info.js';
 import { validateConnection, listProviderModels } from './adapters.js';
 import { selectModel, validateRoute, inputForCapture, enqueueRun, readRun, probeInput } from './jobs.js';
@@ -29,7 +30,7 @@ function visibleCapture(workspace, actor, id) {
 async function configState(env, actor) {
   const connections = (await listRecords(env.DB, 'connection')).map(c => connectionDto(c, env));
   const models = await listRecords(env.DB, 'model'), routes = await listRecords(env.DB, 'route');
-  if (can(actor, 'ai.manage')) return { connections, models, routes, secretStoreConfigured: Boolean(env.AI_CREDENTIALS_ENCRYPTION_KEY), environmentCredentials: Object.fromEntries(['gemini', 'openai', 'anthropic', 'openai_compatible'].map(p => [p, hasEnvironmentCredential(env, p)])) };
+  if (can(actor, 'ai.manage')) return { connections, models, routes, secretStoreConfigured: true, secretStoreMode: secretStoreMode(env), environmentCredentials: Object.fromEntries(['gemini', 'openai', 'anthropic', 'openai_compatible'].map(p => [p, hasEnvironmentCredential(env, p)])) };
   const allowedIds = new Set(routes.filter(r => actor.markets.includes(r.market)).flatMap(r => r.allowedModelIds));
   return { connections: connections.filter(c => c.allowedMarkets.some(m => actor.markets.includes(m))).map(({ id, name, provider, allowedMarkets, enabled, credentialConfigured }) => ({ id, name, provider, allowedMarkets, enabled, credentialConfigured })), models: models.filter(m => allowedIds.has(m.id)), routes: routes.filter(r => actor.markets.includes(r.market)), secretStoreConfigured: false, environmentCredentials: {} };
 }

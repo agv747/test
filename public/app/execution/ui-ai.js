@@ -53,7 +53,9 @@ function providerCard(ai, connection) {
     <form data-form="ai-connect" class="rei-form-grid">
       <label>Provider<select name="provider" ${connection ? 'disabled' : ''}>${Object.entries(providers).map(([k, n]) => option(k, n, provider)).join('')}</select></label>
       <label>API key<input type="password" name="apiKey" autocomplete="off" placeholder="${stored ? 'Saved \u2014 type to replace' : 'Paste the provider key'}" ${stored ? '' : 'required'}></label>
-      <p class="small muted rei-full">The key is encrypted and stored with this application, so it does not depend on a Worker secret. ${connection?.credentialSource === 'environment' ? 'This connection currently reads a Worker secret instead; saving a key here switches it over.' : ''}</p>
+      <p class="small muted rei-full">The key is encrypted and kept with this application, so it works on every deployment and needs no Worker secret. ${ai.secretStoreMode === 'worker_secret'
+        ? 'The encryption key itself is a Worker secret, which nothing can read back.'
+        : 'The encryption key is generated once and kept in the database beside the credential, so anyone who can read the database can decrypt it \u2014 set AI_CREDENTIALS_ENCRYPTION_KEY as a Worker secret to make it unreadable.'}${connection?.credentialSource === 'environment' ? ' This connection currently reads a Worker secret; saving a key here switches it over.' : ''}</p>
       <div class="toolbar rei-full"><button class="btn btn--primary" type="submit">${stored ? 'Replace key' : 'Save key'}</button>${connection ? btn('ai-new-connection', 'Use a different provider') : ''}</div>
     </form></section>`;
 }
