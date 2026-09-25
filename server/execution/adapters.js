@@ -40,6 +40,20 @@ const STATUS_HINT = {
   401: 'Check the API key for this connection, and that the account may use this model.',
   403: 'Check the API key for this connection, and that the account may use this model.',
 };
+/**
+ * The provider's own status word — INTERNAL, UNAVAILABLE, INVALID_ARGUMENT — and nothing else.
+ *
+ * Without it a 500 and a 503 read the same, and they call for opposite things: one is the
+ * request, the other is load. The body is never kept: a provider may echo request content in
+ * it, so only a closed-vocabulary token from a known field survives.
+ */
+async function statusToken(response) {
+  try {
+    const data = JSON.parse((await response.text()).slice(0, 20000));
+    const token = data?.error?.status ?? data?.error?.type ?? data?.error?.code;
+    return typeof token === 'string' && /^[A-Za-z_]{3,40}$/.test(token) ? token : null;
+  } catch { return null; }
+}
 function statusHint(status) { return STATUS_HINT[status] ?? (status >= 500 ? 'This is an outage on the provider side; the run is retried automatically.' : null); }
 export function providerError(code, details = {}) {
   const { hint = null, ...rest } = details;
@@ -64,7 +78,7 @@ export async function providerFetch(connection, credential, suffix, { body, time
     if (response.status >= 300 && response.status < 400) throw providerError('AI_REDIRECT_BLOCKED', { httpStatus: response.status, durationMs: Date.now() - start });
     const retryHeader = response.headers.get('retry-after');
     const retryAfterMs = retryHeader ? (/^\d+(\.\d+)?$/.test(retryHeader) ? Number(retryHeader) * 1000 : Math.max(0, Date.parse(retryHeader) - Date.now())) : 2000;
-    if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start, hint: statusHint(response.status) });
+    if (!response.ok) throw providerError(response.status === 401 || response.status === 403 ? 'AI_AUTH_FAILED' : response.status === 429 ? 'AI_RATE_LIMITED' : response.status === 404 || response.status >= 500 ? 'AI_MODEL_UNAVAILABLE' : 'AI_IMAGE_UNSUPPORTED', { httpStatus: response.status, providerStatus: await statusToken(response), retryable: response.status === 429 || response.status >= 500, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 2000, durationMs: Date.now() - start, hint: statusHint(response.status) });
     const text = await response.text();
     requireThat(text.length <= 2000000, 'AI_INVALID_OUTPUT', 'The provider response exceeded the output limit.');
     let data; try { data = JSON.parse(text); } catch { throw new DomainError('AI_INVALID_OUTPUT', 'The provider returned a non-JSON response.'); }
@@ -124,14 +138,34 @@ export function parseProviderResponse(provider, protocol, data) {
   requireThat(typeof raw === 'string' && raw.trim(), 'AI_INVALID_OUTPUT', 'The provider returned no observation JSON.');
   return { raw, usage, resolvedModelId, responseId: data.id ?? data.responseId ?? null };
 }
+/**
+ * Gemini answered every Planogram Check request carrying its response schema with a 5xx within a
+ * second or four, on two models, while the same request without the schema succeeded and Price
+ * Validation's smaller schema was accepted. A schema is how the provider is asked to keep to the
+ * shape; `validateOutput` is what guarantees it, and it runs either way. So a structured request
+ * the provider fails on is sent once more without the schema, and the run records that it was.
+ */
+const schemaRejected = (connection, model, e) => connection.provider === 'gemini' && model.structuredOutput !== false && e?.code === 'AI_MODEL_UNAVAILABLE' && e.httpStatus >= 500;
 export async function runProvider(connection, credential, model, input, settings, options = {}) {
-  const request = buildProviderRequest(connection, model, input, settings);
-  const response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: settings.timeoutMs, ...options });
+  const started = Date.now();
+  let response, schema = null;
+  try {
+    const request = buildProviderRequest(connection, model, input, settings);
+    response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: settings.timeoutMs, ...options });
+  } catch (e) {
+    if (!schemaRejected(connection, model, e)) throw e;
+    schema = { enforced: false, rejectedWith: { httpStatus: e.httpStatus, providerStatus: e.providerStatus ?? null } };
+    const request = buildProviderRequest(connection, { ...model, structuredOutput: false }, input, settings);
+    const remaining = Math.max(1000, (settings.timeoutMs ?? 60000) - (Date.now() - started));
+    try { response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: remaining, ...options }); }
+    catch (retry) { throw Object.assign(retry, { schema, durationMs: Date.now() - started }); }
+  }
+  const durationMs = Date.now() - started;
   let parsed;
   try { parsed = parseProviderResponse(connection.provider, connection.protocol, response.data); }
-  catch (e) { e.durationMs = response.durationMs; e.requestId = response.requestId; throw e; }
-  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs: response.durationMs, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
-  catch (e) { Object.assign(e, parsed, { durationMs: response.durationMs, requestId: response.requestId }); throw e; }
+  catch (e) { Object.assign(e, { durationMs, requestId: response.requestId, schema }); throw e; }
+  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
+  catch (e) { Object.assign(e, parsed, { durationMs, requestId: response.requestId, schema }); throw e; }
 }
 /** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */
 export function estimateCost(usage, pricing) {

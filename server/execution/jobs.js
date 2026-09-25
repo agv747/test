@@ -92,13 +92,13 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
       const found = new Set((response.result.products ?? response.result.prices ?? []).map(x => x.skuCandidateId));
       requireThat(found.has('PROBE-A') && found.has('PROBE-B'), 'AI_INVALID_OUTPUT', 'The API accepted the image but did not identify both labelled test rectangles.');
     }
-    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost });
+    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null });
     p.result = response.result; p.raw = response.raw; p.resolvedModelId = response.resolvedModelId; p.completedAt = new Date().toISOString();
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'verified');
     await persistRun(env.DB, row, p, 'needs_review');
   } catch (e) {
     const code = e.code ?? 'AI_NETWORK_ERROR';
-    Object.assign(attempt, { state: 'failed', error: { code, message: e.code ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
+    Object.assign(attempt, { state: 'failed', error: { code, message: e.code ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
     const transportAttempts = p.attempts.filter(a => !a.repair).length;
     const repair = code === 'AI_INVALID_OUTPUT' && !p.attempts.some(a => a.repair);
     const retry = e.retryable && transportAttempts < 2 && !attempt.repair;
@@ -137,7 +137,7 @@ export async function processDueJobs(env) {
   }
   // Cron gives durable recovery; bounded rounds also execute a schema repair without waiting a minute.
   for (let round = 0; round < 3; round++) {
-    const queued = (await env.DB.prepare('SELECT id,created_at,payload FROM rei_jobs WHERE status=\'queued\' AND next_at<=? ORDER BY created_at LIMIT 10').bind(Date.now()).all()).results;
+    const queued = (await env.DB.prepare('SELECT id,next_at,payload FROM rei_jobs WHERE status=\'queued\' AND next_at<=? ORDER BY created_at LIMIT 10').bind(Date.now()).all()).results;
     const due = queued.filter(row => canRun(env, row)).slice(0, 2);
     if (!due.length) break;
     await Promise.allSettled(due.map(row => executeRun(env, row.id)));
@@ -152,12 +152,16 @@ export async function processDueJobs(env) {
  * served the page, passed, and then a cron on a Worker that had never been given the key claimed
  * the run and failed it with "no provider key is visible here" — true of that Worker, false of
  * the deployment the reader was looking at. A job is therefore claimed only by a Worker that can
- * read its key; after this window, anyone may take it, so a key that exists nowhere still ends
- * in a failure with its diagnosis instead of a run that stays queued forever.
+ * read its key; once it has been due this long, anyone may take it, so a key that exists nowhere
+ * still ends in a failure with its diagnosis instead of a run that stays queued forever.
+ *
+ * The window runs from when the job became due, not from when it was created. Counted from
+ * creation, a retry scheduled after a provider 5xx fell outside it and went to a Worker with no
+ * key — which replaced a transient provider error with a false configuration one.
  */
 export const HANDOFF_MS = 90000;
 function canRun(env, row, now = Date.now()) {
-  if (now - row.created_at >= HANDOFF_MS) return true;
+  if (now - row.next_at >= HANDOFF_MS) return true;
   const connection = JSON.parse(row.payload).selection?.connection;
   return connection?.credentialSource !== 'environment' || Boolean(readEnvSecret(env, connection.provider));
 }

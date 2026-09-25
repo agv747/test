@@ -58,6 +58,43 @@ test('AI-09: errors are typed; only transient transport failures are retryable',
   await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', { timeoutMs: 10, fetchImpl: (_url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))) }), { code: 'AI_TIMEOUT' });
   assert.throws(() => parseProviderResponse('gemini', 'gemini', { promptFeedback: { blockReason: 'SAFETY' } }), e => e.code === 'AI_REFUSED' && !e.retryable);
 });
+test('a schema Gemini fails on is dropped once, and the output is still validated', async () => {
+  // Live: every Planogram Check request with its schema got a fast 5xx; without it, it passed.
+  const bodies = [];
+  const fetchImpl = async (_url, options) => {
+    const body = JSON.parse(options.body); bodies.push(body);
+    if (body.generationConfig.responseJsonSchema) return Response.json({ error: { code: 500, status: 'INTERNAL', message: 'x' } }, { status: 500 });
+    return Response.json(geminiResponse(output()));
+  };
+  const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl });
+  assert.equal(bodies.length, 2); assert.equal(response.result.products.length, 2);
+  assert.deepEqual(response.schema, { enforced: false, rejectedWith: { httpStatus: 500, providerStatus: 'INTERNAL' } });
+  assert.equal(bodies[1].generationConfig.responseMimeType, 'application/json', 'still asks for JSON');
+
+  // Accepted schemas are untouched, and output that breaks the contract still fails.
+  const accepted = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => Response.json(geminiResponse(output())) });
+  assert.equal(accepted.schema, null);
+  const invalid = async (_url, options) => JSON.parse(options.body).generationConfig.responseJsonSchema ? new Response('{}', { status: 500 }) : Response.json(geminiResponse({ invalid: true }));
+  await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: invalid }), e => e.code === 'AI_INVALID_OUTPUT' && e.schema.enforced === false);
+
+  // Load is not a schema problem: when the retry fails too, that failure is what is reported.
+  let calls = 0;
+  await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 }); } }),
+    e => e.code === 'AI_MODEL_UNAVAILABLE' && e.retryable && e.providerStatus === 'UNAVAILABLE' && e.schema.enforced === false);
+  assert.equal(calls, 2);
+  // Other providers keep their schema behaviour exactly.
+  calls = 0;
+  await assert.rejects(() => runProvider(conn('openai'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return new Response('{}', { status: 500 }); } }), { code: 'AI_MODEL_UNAVAILABLE' });
+  assert.equal(calls, 1);
+});
+test('a provider failure keeps the status word and the HTTP status, never the text', async () => {
+  // A 500 and a 503 read the same without these, and they call for opposite fixes.
+  const body = JSON.stringify({ error: { code: 500, message: 'provider may echo a secret here', status: 'INTERNAL' } });
+  await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', { fetchImpl: async () => new Response(body, { status: 500 }) }),
+    e => e.httpStatus === 500 && e.providerStatus === 'INTERNAL' && !JSON.stringify({ ...e, message: e.message }).includes('echo'));
+  await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', { fetchImpl: async () => new Response('plain text, echo', { status: 503 }) }),
+    e => e.httpStatus === 503 && e.providerStatus === null);
+});
 test('a failing status says what to do about it, without echoing the response', async () => {
   const body = 'provider may echo a secret here';
   const expect = { 404: /refresh the model list/i, 500: /outage on the provider side/i, 429: /limit to reset/i, 401: /Check the API key/i };
@@ -179,11 +216,19 @@ test('a Worker that cannot read the key leaves the run to one that can', async t
     await processDueJobs(keyed);
     assert.equal((await readRun(keyed, actor, run.id)).state, 'needs_review'); assert.equal(calls, 1);
 
+    // A retry of an old job is due now, not since creation: live, a 5xx retry went to a keyless
+    // Worker and a transient provider error was replaced with a false configuration one.
+    const retried = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'retried-later' });
+    await DB.prepare('UPDATE rei_jobs SET created_at=? WHERE id=?').bind(Date.now() - 10 * HANDOFF_MS, retried.id).run();
+    await processDueJobs(keyless);
+    assert.equal((await readRun(keyed, actor, retried.id)).state, 'queued', 'a fresh retry belongs to a Worker with the key');
+    await processDueJobs(keyed); assert.equal(calls, 2);
+
     // A key that exists on no Worker still ends in its diagnosis rather than a run queued forever.
     const orphan = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'no-worker-has-it' });
-    await DB.prepare('UPDATE rei_jobs SET created_at=? WHERE id=?').bind(Date.now() - HANDOFF_MS, orphan.id).run();
+    await DB.prepare('UPDATE rei_jobs SET next_at=? WHERE id=?').bind(Date.now() - HANDOFF_MS, orphan.id).run();
     await processDueJobs(keyless);
-    assert.equal((await readRun(keyed, actor, orphan.id)).error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 1);
+    assert.equal((await readRun(keyed, actor, orphan.id)).error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 2);
   } finally { DB.close(); }
 });
 
