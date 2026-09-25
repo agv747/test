@@ -120,15 +120,17 @@ test('a pasted key alone configures a provider end to end, with no Worker secret
   };
   const PASTED = 'pasted-key-fixture-value';
   const seen = [];
+  let usageMetadata;
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     seen.push({ url: String(url), key: options?.headers?.['x-goog-api-key'] ?? null });
     if (String(url).includes(':generateContent')) {
+      await new Promise(resolve => setTimeout(resolve, 5)); // a measured speed needs a nonzero duration
       // Each module has its own schema, so the stub must answer the task it was actually asked.
       const forSg = String(options?.body ?? '').includes(TASK_SG);
       const payload = forSg
         ? { schemaVersion: '1', task: TASK_SG, prices: ['PROBE-A', 'PROBE-B'].map((id, i) => ({ imageId: 'probe-image', bbox: [0.1 + i * 0.4, 0.1, 0.2, 0.2], skuCandidateId: id, rawText: '1.00', priceDecimal: '1.00', currency: 'SGD', packUnitCandidate: null, score: null })), qualityWarnings: [] }
         : { schemaVersion: '1', task: TASK_TW, products: ['PROBE-A', 'PROBE-B'].map((id, i) => ({ detectionId: `d${i}`, imageId: 'probe-image', bbox: [0.1 + i * 0.4, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: id, alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' })), proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
-      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] }, finishReason: 'STOP' }] });
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] }, finishReason: 'STOP' }], usageMetadata });
     }
     return Response.json({ models: [{ name: 'models/gemini-vision-fixture', displayName: 'Vision fixture', supportedGenerationMethods: ['generateContent'], outputTokenLimit: 8192 }] });
   });
@@ -168,5 +170,18 @@ test('a pasted key alone configures a provider end to end, with no Worker secret
   const finished = await call(`/ai/runs/${probe.body.id}`);
   assert.equal(finished.body.state, 'needs_review', JSON.stringify(finished.body.error));
   assert.ok(!JSON.stringify(finished.body).includes(PASTED), 'the key must not come back through the run API');
+
+  // 5. The probe has two positions; the live cabinet has 210. With the live probe's measured cost
+  // the check must refuse to pass Taiwan — every real 7×30 audit failed while the probe passed —
+  // and still pass Singapore, whose single price photo the probe does represent.
+  const live = await readWorkspace(DB);
+  await writeRecord(DB, 'workspace', 'TW', { ...live.data, fixtures: [{ id: 'F1', name: 'Counter', rows: 7, columns: 30 }] }, live.revision);
+  usageMetadata = { candidatesTokenCount: 253, thoughtsTokenCount: 1021 };
+  const scaled = await call(`/ai/connections/${id}/verify`, { remoteModelId: 'gemini-vision-fixture' });
+  const [tw, sg] = [TASK_TW, TASK_SG].map(task => scaled.body.steps.find(s => s.key === `vision:${task}`));
+  assert.equal(tw.state, 'failed', tw.detail);
+  assert.match(tw.detail, /7×30 audit \(210 positions\).*would be cut off/);
+  assert.equal(sg.state, 'passed', sg.detail);
+  assert.equal(scaled.body.ok, false);
   DB.close();
 });

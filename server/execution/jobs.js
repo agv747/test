@@ -97,14 +97,14 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'verified');
     await persistRun(env.DB, row, p, 'needs_review');
   } catch (e) {
-    const code = e.code ?? 'AI_NETWORK_ERROR';
-    Object.assign(attempt, { state: 'failed', error: { code, message: e.code ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
+    const ours = typeof e.code === 'string', code = ours ? e.code : 'AI_NETWORK_ERROR';
+    Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
     const transportAttempts = p.attempts.filter(a => !a.repair).length;
     const repair = code === 'AI_INVALID_OUTPUT' && !p.attempts.some(a => a.repair);
     const retry = e.retryable && transportAttempts < 2 && !attempt.repair;
     const retryAt = Date.now() + (retry ? Math.max(2000, e.retryAfterMs ?? 2000) : 0);
     if ((repair || retry) && retryAt < p.deadline) { p.repairNext = repair; await persistRun(env.DB, row, p, 'queued', retryAt); return; }
-    p.error = { code, message: e.code ? e.message : 'Recognition processing failed.', retryable: Boolean(e.retryable) }; p.completedAt = new Date().toISOString();
+    p.error = { code, message: ours ? e.message : 'Recognition processing failed.', retryable: Boolean(e.retryable) }; p.completedAt = new Date().toISOString();
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'failed').catch(() => {});
     if (p.selection.route.fallbackModelId && !p.fallbackFrom && e.retryable && !['AI_REFUSED', 'AI_AUTH_FAILED'].includes(code) && Date.now() < p.deadline) {
       try {

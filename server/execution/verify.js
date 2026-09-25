@@ -24,7 +24,7 @@
 import { getCredential } from './credentials.js';
 import { listProviderModels, runProvider, validateConnection } from './adapters.js';
 import { probeInput, selectModel } from './jobs.js';
-import { listRecords, writeRecord } from './storage.js';
+import { listRecords, readWorkspace, writeRecord } from './storage.js';
 import { TASK_TW, TASK_SG } from '../../public/app/execution/ai-contracts.js';
 
 const MODULES = [
@@ -32,6 +32,34 @@ const MODULES = [
   { task: TASK_SG, market: 'SG', label: 'Price Validation' },
 ];
 const step = (key, label) => ({ key, label, state: 'not_reached', detail: null, durationMs: null });
+
+/**
+ * Whether a full audit fits the route, extrapolated from what the probe actually cost.
+ *
+ * The probe has two positions and a Taiwan cabinet has 210. On the live account the probe
+ * passed while every real 7×30 audit failed: once cut off at 8,192 output tokens after 7,860
+ * of them went to thinking, once aborted at the 60-second limit. A green check that a real run
+ * cannot fit is the one failure this screen exists to prevent, so the probe's measured tokens
+ * per position and speed are scaled to the largest fixture and compared with the route.
+ *
+ * The thinking reserve is that live observation, not a model of it. The speed includes request
+ * latency, so it is slower than generation alone — the estimate errs towards "will not fit".
+ * @returns {{slots:number, tokens:number, seconds:number, fitsTokens:boolean, fitsTime:boolean}|null}
+ */
+export function capacity(usage, requestMs, slots, route, probeSlots = 2) {
+  const out = usage?.candidatesTokenCount ?? usage?.output_tokens ?? usage?.completion_tokens;
+  if (!Number.isFinite(out) || out <= 0 || !(requestMs > 0) || !(slots > probeSlots)) return null;
+  const thoughts = Number.isFinite(usage.thoughtsTokenCount) ? usage.thoughtsTokenCount : 0;
+  const tokens = Math.ceil(out / probeSlots * slots + Math.max(thoughts, 8000));
+  const seconds = Math.ceil(tokens / ((out + thoughts) / (requestMs / 1000)));
+  return { slots, tokens, seconds, fitsTokens: tokens <= route.maxOutputTokens, fitsTime: seconds * 1000 <= route.timeoutMs };
+}
+async function largestFixture(env) {
+  try {
+    const fixtures = (await readWorkspace(env.DB)).data.fixtures ?? [];
+    return fixtures.reduce((best, f) => (f.rows * f.columns > (best?.rows ?? 0) * (best?.columns ?? 0) ? f : best), null);
+  } catch { return null; }
+}
 
 /** A provider or domain error is already written for a reader; anything else must not leak. */
 const describe = (error) => (error?.code ? error.message : 'The check could not be completed.');
@@ -113,13 +141,23 @@ export async function verifyConnection(env, actor, connection, remoteModelId, { 
       const response = await runProvider(selection.connection, credential, selection.model, probeInput(module.task), { timeoutMs: selection.route.timeoutMs, maxOutputTokens: selection.route.maxOutputTokens }, { fetchImpl });
       const found = new Set((response.result?.products ?? response.result?.prices ?? []).map((x) => x.skuCandidateId));
       const both = found.has('PROBE-A') && found.has('PROBE-B');
-      Object.assign(slot, {
-        state: both ? 'passed' : 'warned',
-        durationMs: response.durationMs ?? Date.now() - probedAt,
-        detail: `${esc(selection.model.displayName ?? selection.model.remoteModelId)}${routed ? '' : ' (not saved for this module yet)'} · ${both
-          ? 'read a synthetic test image and returned both labelled rectangles.'
-          : 'answered in the right format but missed part of the test image. It will run; accuracy on a real shelf is not measured here.'}`,
-      });
+      const name = `${esc(selection.model.displayName ?? selection.model.remoteModelId)}${routed ? '' : ' (not saved for this module yet)'}`;
+      const schemaNote = response.schema?.enforced === false
+        ? ` The provider did not accept the response schema (HTTP ${response.schema.rejectedWith.httpStatus}) and answered without it; the answer was still checked against the contract.`
+        : '';
+      const fixture = module.task === TASK_TW ? await largestFixture(env) : null;
+      const fit = fixture ? capacity(response.usage, response.requestMs ?? response.durationMs, fixture.rows * fixture.columns, selection.route) : null;
+      let state = both ? 'passed' : 'warned';
+      let detail = `${name} · ${both
+        ? 'read a synthetic test image and returned both labelled rectangles.'
+        : 'answered in the right format but missed part of the test image. It will run; accuracy on a real shelf is not measured here.'}`;
+      if (fit && !(fit.fitsTokens && fit.fitsTime)) {
+        state = 'failed';
+        detail = `${name} read the test image, but a full ${fixture.rows}×${fixture.columns} audit (${fit.slots} positions) needs about ${fit.tokens.toLocaleString('en')} output tokens and ${fit.seconds} s at the speed measured here. This module allows ${selection.route.maxOutputTokens.toLocaleString('en')} tokens and ${Math.round(selection.route.timeoutMs / 1000)} s, so a real audit would be cut off.`;
+      } else if (fit) {
+        detail += ` A full ${fixture.rows}×${fixture.columns} audit is estimated at ${fit.tokens.toLocaleString('en')} tokens and ${fit.seconds} s, within this module's limits.`;
+      }
+      Object.assign(slot, { state, durationMs: response.durationMs ?? Date.now() - probedAt, detail: detail + schemaNote });
     } catch (error) {
       Object.assign(slot, { state: 'failed', durationMs: Date.now() - probedAt, detail: describe(error) });
     }

@@ -87,6 +87,27 @@ test('a schema Gemini fails on is dropped once, and the output is still validate
   await assert.rejects(() => runProvider(conn('openai'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return new Response('{}', { status: 500 }); } }), { code: 'AI_MODEL_UNAVAILABLE' });
   assert.equal(calls, 1);
 });
+test('the check scales the probe to the real cabinet and says when an audit cannot fit', async () => {
+  const { capacity } = await import('../server/execution/verify.js');
+  // Live probe on gemini-3.6-flash: 253 output and 1,021 thinking tokens in 6.5 s, for 2 positions.
+  const probe = { candidatesTokenCount: 253, thoughtsTokenCount: 1021 };
+  const live = capacity(probe, 6510, 210, { maxOutputTokens: 8192, timeoutMs: 60000 });
+  // The live 7×30 audits failed at exactly these two limits: cut off at 8,192, aborted at 60 s.
+  assert.equal(live.fitsTokens, false); assert.equal(live.fitsTime, false);
+  assert.ok(live.tokens > 30000 && live.seconds > 120, JSON.stringify(live));
+  // A demo-sized 2×10 cabinet fits once the output limit is raised.
+  const demo = capacity(probe, 6510, 20, { maxOutputTokens: 32768, timeoutMs: 60000 });
+  assert.equal(demo.fitsTokens && demo.fitsTime, true, JSON.stringify(demo));
+  // Nothing to extrapolate from, or nothing to extrapolate to: no verdict rather than a guess.
+  assert.equal(capacity(null, 6510, 210, {}), null);
+  assert.equal(capacity(probe, 6510, 2, {}), null);
+});
+test('a timeout is AI_TIMEOUT even when the runtime aborts with a DOMException', async () => {
+  // Workers abort with a DOMException whose numeric code (20) was mistaken for one of ours:
+  // a live 7×30 audit that ran out of time was recorded as "code 20, operation aborted".
+  const abortLike = (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted', 'AbortError'))));
+  await assert.rejects(() => providerFetch(conn('gemini'), 'fixture-key', '/models', { timeoutMs: 10, fetchImpl: abortLike }), e => e.code === 'AI_TIMEOUT' && !e.message.includes('aborted'));
+});
 test('a provider failure keeps the status word and the HTTP status, never the text', async () => {
   // A 500 and a 503 read the same without these, and they call for opposite fixes.
   const body = JSON.stringify({ error: { code: 500, message: 'provider may echo a secret here', status: 'INTERNAL' } });

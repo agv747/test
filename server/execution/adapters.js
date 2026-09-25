@@ -84,7 +84,9 @@ export async function providerFetch(connection, credential, suffix, { body, time
     let data; try { data = JSON.parse(text); } catch { throw new DomainError('AI_INVALID_OUTPUT', 'The provider returned a non-JSON response.'); }
     return { data, requestId: response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? null, durationMs: Date.now() - start };
   } catch (e) {
-    if (e.code) throw e;
+    // Only our own errors carry a string code. The runtime's AbortError is a DOMException with a
+    // numeric code (20), and passing it on recorded a timeout as "code 20, operation aborted".
+    if (typeof e.code === 'string') throw e;
     throw providerError(controller.signal.aborted ? 'AI_TIMEOUT' : 'AI_NETWORK_ERROR', { durationMs: Date.now() - start });
   } finally { clearTimeout(timer); }
 }
@@ -164,7 +166,8 @@ export async function runProvider(connection, credential, model, input, settings
   let parsed;
   try { parsed = parseProviderResponse(connection.provider, connection.protocol, response.data); }
   catch (e) { Object.assign(e, { durationMs, requestId: response.requestId, schema }); throw e; }
-  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
+  // `requestMs` is the answering request alone, without a rejected first try — what a speed is measured from.
+  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs, requestMs: response.durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
   catch (e) { Object.assign(e, parsed, { durationMs, requestId: response.requestId, schema }); throw e; }
 }
 /** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */
