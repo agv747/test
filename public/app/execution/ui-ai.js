@@ -88,12 +88,25 @@ function testCard(ai, connection) {
     </section>`;
 }
 /** Step 3. Only models this key actually offers, and one choice per module. */
+/**
+ * Whether a model id is one that reads an image, rather than making or speaking one.
+ *
+ * A provider list mixes jobs: Gemini's listing returns image generation ("Nano Banana"),
+ * text-to-speech, audio and embedding models alongside the ones that can look at a photograph,
+ * and all of them report `generateContent`. One was picked for a planogram audit, which it
+ * cannot do. This is a name heuristic and therefore fallible — it only narrows the menu, and
+ * the check in step 2 remains the thing that actually proves a model can do the job.
+ */
+const NOT_RECOGNITION = /(^|-)(imagen|veo|embedding|embed|rerank)|-image|image-|tts|audio|speech|-live/i;
+export const readsImages = id => !NOT_RECOGNITION.test(String(id ?? ''));
 function useCard(ai, connection) {
   const listedIds = new Set((q.report?.models ?? []).map(m => m.remoteModelId));
   return `<section class="card rei-step-card"><div class="rei-step-head"><span class="rei-step-n">3</span><h3>Use it</h3></div>
     ${[['TW', 'Planogram Check', TASK_TW], ['SG', 'Price Validation', TASK_SG]].map(([market, label, task]) => {
       const current = ai.routes.find(r => r.task === task);
-      const choices = ai.models.filter(m => m.connectionId === connection?.id && (!listedIds.size || listedIds.has(m.remoteModelId) || m.id === current?.defaultModelId));
+      const choices = ai.models.filter(m => m.connectionId === connection?.id
+        && (!listedIds.size || listedIds.has(m.remoteModelId) || m.id === current?.defaultModelId)
+        && (readsImages(m.remoteModelId) || m.id === current?.defaultModelId));
       const active = ai.models.find(m => m.id === current?.defaultModelId);
       const orphan = active && listedIds.size && !listedIds.has(active.remoteModelId);
       return `<form class="rei-form-grid rei-use-row" data-form="ai-default" data-market="${market}" data-task="${task}">
@@ -221,7 +234,13 @@ export async function onSubmit(form, ctx) {
     });
     q.connectionId = saved.connection?.id ?? existing?.id ?? null;
     q.report = null;
-    q.notice = 'Key saved. Check the connection to see which models it offers.';
+    // Saying "saved" when no key was sent is how a connection stayed on a Worker secret while
+    // the screen claimed otherwise. Report what actually happened to the credential.
+    q.notice = key
+      ? 'Key saved with this application. Check the connection to see which models it offers.'
+      : saved.connection?.credentialSource === 'encrypted'
+        ? 'Connection saved. The stored key was left unchanged.'
+        : 'No key was entered, and this connection has none stored — it still depends on a Worker secret. Paste the provider key above.';
   } else if (type === 'ai-connection') {
     const c = ai.connections.find(c => c.id === q.connectionId), key = p.get('apiKey');
     form.querySelector('[name="apiKey"]').value = '';

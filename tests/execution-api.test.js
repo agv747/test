@@ -108,3 +108,60 @@ test('Administrator login accepts three characters while user tokens retain thei
     assert.equal((await f.request('/session', { accessToken: 'xyz' }, { credential: null })).status, 401);
   } finally { f.DB.close(); }
 });
+
+test('a pasted key alone configures a provider end to end, with no Worker secret anywhere', async t => {
+  // The environment a deployment that cannot see secrets actually has: a database and a way in.
+  const DB = sqliteD1();
+  const env = { DB, ADMIN_ACCESS_TOKEN: token };
+  const call = async (path, body, method = body === undefined ? 'GET' : 'POST') => {
+    const headers = { origin: 'https://app.example', cookie: `rei_session=${token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) };
+    const response = await handleExecution(new Request(`https://app.example/api/execution${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }), env);
+    return { status: response.status, body: await response.json() };
+  };
+  const PASTED = 'pasted-key-fixture-value';
+  const seen = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    seen.push({ url: String(url), key: options?.headers?.['x-goog-api-key'] ?? null });
+    if (String(url).includes(':generateContent')) {
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ schemaVersion: '1', task: TASK_TW, products: [
+        { detectionId: 'd1', imageId: 'probe-image', bbox: [0.1, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: 'PROBE-A', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' },
+        { detectionId: 'd2', imageId: 'probe-image', bbox: [0.5, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: 'PROBE-B', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' },
+      ], proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] }) }] }, finishReason: 'STOP' }] });
+    }
+    return Response.json({ models: [{ name: 'models/gemini-vision-fixture', displayName: 'Vision fixture', supportedGenerationMethods: ['generateContent'], outputTokenLimit: 8192 }] });
+  });
+
+  // 1. Paste the key. Nothing else is asked for, and it must land encrypted, not as a plain field.
+  const created = await call('/ai/connections', { name: 'Google Gemini', provider: 'gemini', allowedMarkets: ['SG', 'TW'], enabled: true, apiKey: PASTED });
+  assert.equal(created.status, 201);
+  const id = created.body.connection.id;
+  const row = await readRecord(DB, 'connection', id);
+  assert.equal(row.data.credentialSource, 'encrypted', 'a pasted key must switch the source away from the environment');
+  assert.ok(!JSON.stringify(row).includes(PASTED));
+
+  // 2. Check the connection. Every step passes, and the provider is reached with the pasted key.
+  const report = await call(`/ai/connections/${id}/verify`, { remoteModelId: 'gemini-vision-fixture' });
+  assert.equal(report.status, 200);
+  assert.deepEqual(report.body.steps.map(s => s.state), ['passed', 'passed', 'passed'], JSON.stringify(report.body.steps));
+  assert.ok(seen.every(r => r.key === PASTED), 'every provider call must carry the pasted key');
+  assert.ok(seen.some(r => r.url.includes(':generateContent')), 'the check must actually send the probe image');
+
+  // 3. Models come from the listing, enabled, and a route can be saved against one.
+  await call(`/ai/connections/${id}/refresh-models`, {});
+  const state = await call('/ai/state');
+  const model = state.body.models.find(m => m.remoteModelId === 'gemini-vision-fixture');
+  assert.ok(model?.enabled, 'a refreshed model must be usable without another edit');
+  assert.equal(state.body.secretStoreMode, 'database');
+  const route = await call(`/ai/routes/TW/${TASK_TW}`, { defaultModelId: model.id, allowedModelIds: [model.id], fallbackModelId: null, fieldOverride: false, timeoutMs: 60000, maxOutputTokens: 8192, expectedRevision: 0 }, 'PUT');
+  assert.equal(route.status, 200);
+
+  // 4. A real run reaches the provider on the stored key, which is the thing that kept failing.
+  const { executeRun, processDueJobs } = await import('../server/execution/jobs.js');
+  const probe = await call(`/ai/models/${model.id}/test-task`, { task: TASK_TW, idempotencyKey: crypto.randomUUID() });
+  assert.equal(probe.status, 202);
+  await processDueJobs(env);
+  const finished = await call(`/ai/runs/${probe.body.id}`);
+  assert.equal(finished.body.state, 'needs_review', JSON.stringify(finished.body.error));
+  assert.ok(!JSON.stringify(finished.body).includes(PASTED), 'the key must not come back through the run API');
+  DB.close();
+});

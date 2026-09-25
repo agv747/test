@@ -78,3 +78,39 @@ test('choosing a model saves exactly one route, with no advanced fields', async 
   assert.equal(saved.fallbackModelId, null);
   assert.match(ui.render(ctx), /Model saved/);
 });
+
+test('models that make images or speech are not offered for recognition', async () => {
+  const { readsImages } = await import('../public/app/execution/ui-ai.js');
+  // The one that was actually picked for a planogram audit, and its neighbours in the listing.
+  for (const id of ['gemini-3.1-flash-lite-image', 'gemini-2.5-flash-image', 'gemini-3.8-flash-tts', 'gemini-2.5-flash-native-audio-latest', 'gemini-3.1-flash-live-preview', 'text-embedding-004', 'imagen-3.0', 'veo-2']) {
+    assert.equal(readsImages(id), false, `${id} cannot read a shelf`);
+  }
+  for (const id of ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite']) {
+    assert.equal(readsImages(id), true, `${id} must stay selectable`);
+  }
+});
+
+test('saving with an empty key does not claim a key was saved', async t => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['SG', 'TW'] } });
+    if (url.endsWith('/ai/state')) return Response.json(state({ connections: [{ id: 'c2', name: 'Google Gemini', provider: 'gemini', enabled: true, credentialConfigured: false, credentialSource: 'environment', allowedMarkets: ['SG', 'TW'], revision: 2 }] }));
+    if (url.includes('/ai/connections')) {
+      // Whatever else is sent, an empty field must not send a key.
+      assert.ok(!('apiKey' in JSON.parse(options.body)), 'an empty field must not post a key');
+      return Response.json({ connection: { id: 'c2', credentialSource: 'environment' } });
+    }
+    throw new Error(`Unexpected request ${url}`);
+  });
+  const oldStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  t.after(() => { globalThis.localStorage = oldStorage; });
+  const client = await import('../public/app/execution/client.js');
+  const ui = await import('../public/app/execution/ui-ai.js');
+  await client.initExecution();
+  const ctx = { params: { tab: 'connect' } };
+  t.mock.method(globalThis, 'FormData', function () { return { get: () => '', getAll: () => [] }; });
+  await ui.onSubmit({ dataset: { form: 'ai-connect' }, querySelector: () => ({ value: '' }) }, ctx);
+  const html = ui.render(ctx);
+  assert.match(html, /still depends on a Worker secret/);
+  assert.ok(!html.includes('Key saved'), 'it must not report a save that did not happen');
+});
