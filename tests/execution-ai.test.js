@@ -163,6 +163,30 @@ test('Browser process requests do not own provider calls; scheduled jobs execute
   } finally { DB.close(); }
 });
 
+test('a Worker that cannot read the key leaves the run to one that can', async t => {
+  // The live account had three Workers built from this repository on one database and one queue;
+  // only one held the key. The check passed on that one, and the run was claimed by another.
+  const { HANDOFF_MS } = await import('../server/execution/jobs.js');
+  const DB = sqliteD1(), actor = { id: 'admin', role: 'admin', markets: ['TW'] };
+  const keyless = { DB }, keyed = { DB, GEMINI_API_KEY: 'fixture-key' };
+  const selection = { model, connection: { ...conn('gemini'), credentialSource: 'environment' }, route: { timeoutMs: 1000, maxOutputTokens: 8192 }, task: TASK_TW, market: 'TW' };
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(geminiResponse(output())); });
+  try {
+    const run = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'shared-queue' });
+    await processDueJobs(keyless);
+    assert.equal((await readRun(keyed, actor, run.id)).state, 'queued', 'a keyless Worker must not claim it');
+    await processDueJobs(keyed);
+    assert.equal((await readRun(keyed, actor, run.id)).state, 'needs_review'); assert.equal(calls, 1);
+
+    // A key that exists on no Worker still ends in its diagnosis rather than a run queued forever.
+    const orphan = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'no-worker-has-it' });
+    await DB.prepare('UPDATE rei_jobs SET created_at=? WHERE id=?').bind(Date.now() - HANDOFF_MS, orphan.id).run();
+    await processDueJobs(keyless);
+    assert.equal((await readRun(keyed, actor, orphan.id)).error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 1);
+  } finally { DB.close(); }
+});
+
 test('the analyze button names a missing deployment credential before a run is queued', async () => {
   const { analyzeBlocker } = await import('../public/app/execution/ui.js');
   const route = { defaultModelId: 'm1' };

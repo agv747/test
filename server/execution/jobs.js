@@ -2,7 +2,7 @@ import { authorize, can, requireThat, DomainError } from '../../public/app/execu
 import { TASK_TW, TASK_SG, PROMPT_VERSION } from '../../public/app/execution/ai-contracts.js';
 import { cellBox } from '../../public/app/execution/demo.js';
 import { initDb, readRecord, writeRecord, readMedia, digest, toBase64 } from './storage.js';
-import { connectionDto, getCredential } from './credentials.js';
+import { connectionDto, getCredential, readEnvSecret } from './credentials.js';
 import { runProvider, validateConnection } from './adapters.js';
 import { PROBE_PNG } from './probe-image.js';
 
@@ -137,8 +137,27 @@ export async function processDueJobs(env) {
   }
   // Cron gives durable recovery; bounded rounds also execute a schema repair without waiting a minute.
   for (let round = 0; round < 3; round++) {
-    const due = (await env.DB.prepare('SELECT id FROM rei_jobs WHERE status=\'queued\' AND next_at<=? ORDER BY created_at LIMIT 2').bind(Date.now()).all()).results;
+    const queued = (await env.DB.prepare('SELECT id,created_at,payload FROM rei_jobs WHERE status=\'queued\' AND next_at<=? ORDER BY created_at LIMIT 10').bind(Date.now()).all()).results;
+    const due = queued.filter(row => canRun(env, row)).slice(0, 2);
     if (!due.length) break;
     await Promise.allSettled(due.map(row => executeRun(env, row.id)));
   }
+}
+/**
+ * How long a Worker without the key leaves a job for one that has it.
+ *
+ * Several Workers can be built from this repository and bound to the same database — on the
+ * live account there were three, each with the same one-minute cron, all draining one queue.
+ * A Worker secret belongs to one of them. So the connection check, answered by the Worker that
+ * served the page, passed, and then a cron on a Worker that had never been given the key claimed
+ * the run and failed it with "no provider key is visible here" — true of that Worker, false of
+ * the deployment the reader was looking at. A job is therefore claimed only by a Worker that can
+ * read its key; after this window, anyone may take it, so a key that exists nowhere still ends
+ * in a failure with its diagnosis instead of a run that stays queued forever.
+ */
+export const HANDOFF_MS = 90000;
+function canRun(env, row, now = Date.now()) {
+  if (now - row.created_at >= HANDOFF_MS) return true;
+  const connection = JSON.parse(row.payload).selection?.connection;
+  return connection?.credentialSource !== 'environment' || Boolean(readEnvSecret(env, connection.provider));
 }
