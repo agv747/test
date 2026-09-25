@@ -11,7 +11,7 @@ export const configuredSingaporeProvider = {
     const prepared = await prepareImage(image.file);
     const run = await api('/ai/runs', { task: TASK_SG, image: prepared.processed, width: prepared.width, height: prepared.height, idempotencyKey: crypto.randomUUID() });
     localStorage.setItem(`rei.sg.run.${image.id}`, run.id); triggerRun(run.id);
-    const deadline = Date.now() + 250000;
+    const deadline = Date.now() + 320000; // past the server's 300 s run limit, so the answer is the run's own
     while (Date.now() < deadline) {
       const current = await api(`/ai/runs/${run.id}`);
       if (['failed', 'timed_out'].includes(current.state)) throw new Error(`${current.error?.message ?? 'Recognition failed.'}${current.fallbackRunId ? ' A separately recorded fallback is available in AI run history.' : ''}`);

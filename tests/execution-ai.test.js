@@ -422,3 +422,33 @@ test('recognition asks Gemini for the lowest thinking level, and drops it if the
   await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return new Response('{}', { status: 400 }); } }), { code: 'AI_IMAGE_UNSUPPORTED' });
   assert.equal(calls, 1);
 });
+
+test('a retried run keeps the rows it already has and asks only for the missing ones', async t => {
+  // Live: an overloaded model answered three rows of seven twice in a row; each retry threw
+  // those three away and sent all seven again.
+  const DB = sqliteD1(), env = { DB, GEMINI_API_KEY: 'fixture-key' }, actor = { id: 'admin', role: 'admin', markets: ['TW'] };
+  const geometry = [];
+  for (let row = 1; row <= 7; row++) for (let column = 1; column <= 30; column++) geometry.push({ key: `R${row}C${column}`, row, column, views: [{ imageId: 'probe-image', bbox: [(column - 1) / 30, (row - 1) / 7, 1 / 30, 1 / 7], primary: true }] });
+  const cabinet = { ...probeInput(TASK_TW), catalogue: [{ id: 'S1', code: 'S1', name: 'Fixture SKU' }], geometry };
+  const everything = { schemaVersion: '1', task: TASK_TW, products: geometry.map(g => ({ detectionId: `d-${g.key}`, imageId: 'probe-image', bbox: g.views[0].bbox, slotKeyCandidate: g.key, skuCandidateId: 'S1', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' })), proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
+  const selection = { model, connection: { ...conn('gemini'), credentialSource: 'environment' }, route: { timeoutMs: 1000, maxOutputTokens: 8192 }, task: TASK_TW, market: 'TW' };
+  const asked = [];
+  let overloaded = true;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    const part = Number(/part (\d) of 7/.exec(options.body)[1]); asked.push(part);
+    return overloaded && part > 3 ? Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 }) : Response.json(geminiResponse(everything));
+  });
+  try {
+    const run = await enqueueRun(env, actor, cabinet, selection, { idempotencyKey: 'rows-kept' });
+    await executeRun(env, run.id);
+    let state = await readRun(env, actor, run.id);
+    assert.equal(state.state, 'queued'); assert.equal(state.attempts[0].part.succeeded, 3);
+    asked.length = 0; overloaded = false;
+    await DB.prepare('UPDATE rei_jobs SET next_at=? WHERE id=?').bind(Date.now(), run.id).run();
+    await executeRun(env, run.id);
+    state = await readRun(env, actor, run.id);
+    assert.deepEqual(asked.sort(), [4, 5, 6, 7], 'only the missing rows are asked again');
+    assert.equal(state.state, 'needs_review'); assert.equal(state.result.products.length, 210);
+    assert.equal(state.attempts[1].parts.filter(p => p.fromEarlierAttempt).length, 3);
+  } finally { DB.close(); }
+});

@@ -239,6 +239,12 @@ async function runPart(connection, credential, model, part, settings, options, d
     }
   }
 }
+/**
+ * What of a row's answer is kept for a later attempt of the same run: the validated result and
+ * what was measured, not the raw provider text. On the live account an overloaded model answered
+ * three rows of seven twice in a row, and each retry threw those three away and asked again.
+ */
+const keepable = r => ({ result: r.result, usage: r.usage ?? null, requestMs: r.requestMs ?? r.durationMs ?? null, resolvedModelId: r.resolvedModelId ?? null, responseId: r.responseId ?? null, requestId: r.requestId ?? null, estimatedCost: r.estimatedCost ?? null, schema: r.schema ?? null, thinking: r.thinking ?? null });
 const sumUsage = list => list.reduce((total, usage) => {
   for (const [k, v] of Object.entries(usage ?? {})) if (Number.isFinite(v)) total[k] = (total[k] ?? 0) + v;
   return total;
@@ -251,14 +257,16 @@ export async function runRecognition(connection, credential, model, input, setti
   const parts = splitInput(input);
   if (parts.length === 1) return runProvider(connection, credential, model, input, settings, options);
   const started = Date.now(), deadline = started + (settings.timeoutMs ?? 60000);
-  const settled = await Promise.allSettled(parts.map(part => runPart(connection, credential, model, part, settings, options, deadline)));
+  // Rows answered by an earlier attempt of the same run are not asked again (see `done`).
+  const earlier = Array.isArray(options.done) && options.done.length === parts.length ? options.done : [];
+  const settled = await Promise.allSettled(parts.map((part, i) => earlier[i] ? Promise.resolve(earlier[i]) : runPart(connection, credential, model, part, settings, options, deadline)));
+  const done = settled.map(s => (s.status === 'fulfilled' ? keepable(s.value) : null));
   const failed = settled.findIndex(s => s.status === 'rejected');
   if (failed >= 0) {
     const e = settled[failed].reason;
-    const done = settled.filter(s => s.status === 'fulfilled').length;
-    throw Object.assign(e, { part: { index: failed + 1, of: parts.length, succeeded: done }, durationMs: Date.now() - started });
+    throw Object.assign(e, { part: { index: failed + 1, of: parts.length, succeeded: done.filter(Boolean).length }, done, durationMs: Date.now() - started });
   }
-  const responses = settled.map(s => s.value);
+  const responses = done;
   const merged = { schemaVersion: '1', task: input.task, products: [], proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
   responses.forEach((r, i) => {
     merged.products.push(...r.result.products.map(p => ({ ...p, detectionId: `part${i + 1}-${p.detectionId}` })));
@@ -272,10 +280,10 @@ export async function runRecognition(connection, credential, model, input, setti
     result: validateOutput(merged, input, 'xywh_normalized'),
     raw: JSON.stringify(merged), usage: sumUsage(responses.map(r => r.usage)),
     resolvedModelId: responses[0].resolvedModelId, responseId: responses.map(r => r.responseId).filter(Boolean).join(',') || null,
-    requestId: responses[0].requestId, durationMs: Date.now() - started, requestMs: Math.max(...responses.map(r => r.requestMs ?? r.durationMs)),
+    requestId: responses[0].requestId, durationMs: Date.now() - started, requestMs: Math.max(...responses.map(r => r.requestMs ?? 0)),
     schema: responses.find(r => r.schema)?.schema ?? null,
     estimatedCost: costs.every(Boolean) && new Set(costs.map(c => c.currency)).size === 1 ? { ...costs[0], amount: costs.reduce((n, c) => n + c.amount, 0) } : null,
-    parts: responses.map((r, i) => ({ index: i + 1, rows: parts[i].part.rows, requestMs: r.requestMs ?? r.durationMs, usage: r.usage, schema: r.schema ?? null, thinking: r.thinking ?? null })),
+    parts: responses.map((r, i) => ({ index: i + 1, rows: parts[i].part.rows, requestMs: r.requestMs, usage: r.usage, schema: r.schema, thinking: r.thinking, fromEarlierAttempt: Boolean(earlier[i]) })),
   };
 }
 /** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */

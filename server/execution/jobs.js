@@ -74,12 +74,19 @@ export async function readRun(env, actor, id) {
 async function persistRun(db, row, payload, state, nextAt = Date.now()) {
   return db.prepare('UPDATE rei_jobs SET payload=?,status=?,next_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?').bind(JSON.stringify(payload), state, nextAt, row.id, row.lease_token).run();
 }
+/**
+ * A run's wall-clock limit and attempt ceiling. Five minutes, not three: a run split into rows
+ * retries only the rows still missing, one cron tick apart, and on an overloaded model that
+ * takes a few ticks — each attempt that answers more rows earns another, up to MAX_ATTEMPTS.
+ */
+export const RUN_DEADLINE_MS = 300000;
+export const MAX_ATTEMPTS = 5;
 export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
   const now = Date.now(), lease = crypto.randomUUID();
   const row = await env.DB.prepare('UPDATE rei_jobs SET status=\'processing\',lease_token=?,lease_until=? WHERE id=? AND status=\'queued\' AND next_at<=? RETURNING *').bind(lease, now + 75000, runId, now).first();
   if (!row) return; // Atomic claim, duplicate triggers do not issue another provider call.
-  const p = JSON.parse(row.payload); p.startedAt ??= new Date(now).toISOString(); p.deadline ??= now + 180000;
-  if (now >= p.deadline) { p.error = { code: 'AI_TIMEOUT', message: 'The run reached its 180-second wall-clock limit.', retryable: false }; p.completedAt = new Date().toISOString(); await persistRun(env.DB, row, p, 'timed_out'); return; }
+  const p = JSON.parse(row.payload); p.startedAt ??= new Date(now).toISOString(); p.deadline ??= now + RUN_DEADLINE_MS;
+  if (now >= p.deadline) { p.error = { code: 'AI_TIMEOUT', message: `The run reached its ${RUN_DEADLINE_MS / 1000}-second wall-clock limit.`, retryable: false }; p.completedAt = new Date().toISOString(); await persistRun(env.DB, row, p, 'timed_out'); return; }
   const attempt = { number: p.attempts.length + 1, startedAt: new Date().toISOString(), state: 'processing', repair: Boolean(p.repairNext), estimatedCost: null };
   p.attempts.push(attempt);
   await env.DB.prepare('UPDATE rei_jobs SET payload=? WHERE id=? AND lease_token=?').bind(JSON.stringify(p), row.id, lease).run();
@@ -87,13 +94,13 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
     validateConnection(p.selection.connection, env);
     const credential = await getCredential(env, p.selection.connection).catch(e => { throw handedOff(e, row, now); });
     const input = { ...p.input, images: await Promise.all(p.input.images.map(async i => ({ ...i, base64: i.base64 ?? toBase64(await readMedia(env.DB, i.imageId)) }))) };
-    const response = await runRecognition(p.selection.connection, credential, p.selection.model, input, { timeoutMs: Math.min(p.selection.route.timeoutMs, p.deadline - Date.now()), maxOutputTokens: p.selection.route.maxOutputTokens, repair: p.repairNext }, { fetchImpl });
+    const response = await runRecognition(p.selection.connection, credential, p.selection.model, input, { timeoutMs: Math.min(p.selection.route.timeoutMs, p.deadline - Date.now()), maxOutputTokens: p.selection.route.maxOutputTokens, repair: p.repairNext }, { fetchImpl, done: p.partsDone });
     if (p.purpose === 'capability') {
       const found = new Set((response.result.products ?? response.result.prices ?? []).map(x => x.skuCandidateId));
       requireThat(found.has('PROBE-A') && found.has('PROBE-B'), 'AI_INVALID_OUTPUT', 'The API accepted the image but did not identify both labelled test rectangles.');
     }
     Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null, thinking: response.thinking ?? null, parts: response.parts ?? null });
-    p.result = response.result; p.raw = response.raw; p.resolvedModelId = response.resolvedModelId; p.completedAt = new Date().toISOString();
+    p.result = response.result; p.raw = response.raw; p.resolvedModelId = response.resolvedModelId; p.completedAt = new Date().toISOString(); delete p.partsDone;
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'verified');
     await persistRun(env.DB, row, p, 'needs_review');
   } catch (e) {
@@ -101,7 +108,11 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
     Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, thinking: e.thinking ?? null, part: e.part ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
     const transportAttempts = p.attempts.filter(a => !a.repair).length;
     const repair = code === 'AI_INVALID_OUTPUT' && !p.attempts.some(a => a.repair);
-    const retry = e.retryable && transportAttempts < 2 && !attempt.repair;
+    // Rows already answered are kept, and an attempt that answered more of them earns another.
+    const before = (p.partsDone ?? []).filter(Boolean).length;
+    if (Array.isArray(e.done)) p.partsDone = e.done;
+    const progressed = (p.partsDone ?? []).filter(Boolean).length > before;
+    const retry = e.retryable && !attempt.repair && (transportAttempts < 2 || (progressed && transportAttempts < MAX_ATTEMPTS));
     const retryAt = Date.now() + (retry ? Math.max(2000, e.retryAfterMs ?? 2000) : 0);
     if ((repair || retry) && retryAt < p.deadline) { p.repairNext = repair; await persistRun(env.DB, row, p, 'queued', retryAt); return; }
     p.error = { code, message: ours ? e.message : 'Recognition processing failed.', retryable: Boolean(e.retryable) }; p.completedAt = new Date().toISOString();
