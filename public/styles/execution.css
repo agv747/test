@@ -183,3 +183,4 @@
 .rei-inline-field select { width: auto; }
 .rei-use-row { grid-template-columns: 1fr auto; align-items: end; gap: 12px; margin-bottom: 12px; }
 .rei-warn { color: #a1463e; }
+.rei-deployment { margin-top: 10px; }

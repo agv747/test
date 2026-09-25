@@ -58,6 +58,20 @@ function providerCard(ai, connection) {
     </form></section>`;
 }
 /** Step 2. The check is the run: credential, then listing, then a real image through the model. */
+/**
+ * Which deployment is answering.
+ *
+ * A key can be present in the dashboard and absent from the Worker that serves the page, when
+ * the page is served by a different deployment — a preview, or a second Worker. That reads as
+ * "the secret did not save" and sends the reader back to a screen where nothing is wrong. The
+ * host and the build the API reports are the two facts that settle it, so the screen states
+ * them next to the check rather than leaving them to be guessed.
+ */
+function deploymentLine(auth) {
+  const host = typeof location === 'object' && location?.host ? location.host : 'this host';
+  const build = auth?.buildSha ? `build ${String(auth.buildSha).slice(0, 7)}` : 'build not reported';
+  return `<p class="small muted rei-deployment">Checking the deployment that serves <strong>${esc(host)}</strong> \u00b7 ${esc(build)}. Worker secrets belong to one deployment; a key added to another is not visible here.</p>`;
+}
 function testCard(ai, connection) {
   const listed = q.report?.models ?? [];
   const chosen = q.probeModelId ?? listed[0]?.remoteModelId ?? '';
@@ -67,6 +81,7 @@ function testCard(ai, connection) {
       ${listed.length ? `<label class="rei-inline-field">Model to test<select data-action="ai-probe-model">${listed.map(m => option(m.remoteModelId, `${m.displayName ?? m.remoteModelId}`, chosen)).join('')}</select></label>` : '<span class="small muted">The model list appears after the first check.</span>'}
       <button class="btn btn--primary" type="button" data-action="ai-verify" data-id="${esc(connection.id)}">${q.verifying ? 'Checking\u2026' : 'Check connection'}</button>
     </div>
+    ${deploymentLine(client.getExecution().auth)}
     ${q.report ? `<ol class="rei-steps">${q.report.steps.map(s => `<li class="rei-step rei-step--${s.state}"><span class="rei-step-mark" aria-hidden="true">${STEP_MARK[s.state]}</span><div><strong>${esc(s.label)}</strong>${s.durationMs != null ? `<span class="small muted"> \u00b7 ${(s.durationMs / 1000).toFixed(1)} s</span>` : ''}<p class="small">${esc(s.detail ?? '')}</p></div></li>`).join('')}</ol>` : '<p class="small muted mt">Checks the key, asks the provider which models it offers, then sends a synthetic test image to the model you pick. Nothing from your shelves is used.</p>'}`}
     </section>`;
 }
