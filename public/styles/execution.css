@@ -164,3 +164,22 @@
 /* A saved run is restored per capture from localStorage, so the panel can be showing one from
    hours ago. The time makes that visible instead of reading as the current attempt. */
 .rei-run-when { color:#6b7a70; font-weight:500; }
+
+/* Connection screen: three numbered steps, and a check that reports each one separately.
+   Status carries a mark and a label, never colour alone. */
+.rei-step-card { margin-bottom: 14px; }
+.rei-step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.rei-step-head h3 { margin: 0; flex: 1; }
+.rei-step-n { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #e7efe9; color: #2b4a35; font-size: .78rem; font-weight: 700; flex: none; }
+.rei-steps { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.rei-step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--step-edge, #dde3df); background: var(--step-fill, #f6f8f6); }
+.rei-step p { margin: 2px 0 0; color: #47554c; }
+.rei-step-mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .72rem; font-weight: 700; color: #fff; background: var(--step-mark, #9aa7ad); }
+.rei-step--passed { --step-fill: #eaf5eb; --step-edge: #bfdbc4; --step-mark: #2f7d46; }
+.rei-step--warned { --step-fill: #fff6e8; --step-edge: #e8cfa4; --step-mark: #a9761a; }
+.rei-step--failed { --step-fill: #ffefec; --step-edge: #eac0b9; --step-mark: #a1463e; }
+.rei-step--not_reached { opacity: .62; }
+.rei-inline-field { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
+.rei-inline-field select { width: auto; }
+.rei-use-row { grid-template-columns: 1fr auto; align-items: end; gap: 12px; margin-bottom: 12px; }
+.rei-warn { color: #a1463e; }

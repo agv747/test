@@ -3,6 +3,7 @@ import { TASK_TW, TASK_SG, compareProposal, proposalToReview } from '../../publi
 import { initDb, readRecord, readWorkspace, writeRecord, listRecords, scopeWorkspace, parseImage, saveMedia, deleteMedia, readMedia, digest } from './storage.js';
 import { getActor, actorForToken, authConfigured, sameOrigin, sessionCookie } from './auth.js';
 import { encryptCredential, getCredential, connectionDto, hasEnvironmentCredential } from './credentials.js';
+import { verifyConnection } from './verify.js';
 import { BUILD_SHA } from '../../build-info.js';
 import { validateConnection, listProviderModels } from './adapters.js';
 import { selectModel, validateRoute, inputForCapture, enqueueRun, readRun, probeInput } from './jobs.js';
@@ -106,7 +107,7 @@ async function route(request, env) {
     return new Response(await readMedia(env.DB, mediaPath[1]), { headers: { 'content-type': image.originalId === mediaPath[1] ? image.originalMimeType : image.mimeType, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } });
   }
   if (path === '/ai/state' && method === 'GET') return reply(await configState(env, actor));
-  const connPath = /^\/ai\/connections(?:\/([^/]+)(?:\/(test|refresh-models))?)?$/.exec(path);
+  const connPath = /^\/ai\/connections(?:\/([^/]+)(?:\/(test|refresh-models|verify))?)?$/.exec(path);
   if (connPath) {
     authorize(actor, 'ai.manage', actor.markets[0]);
     const [, connectionId, operation] = connPath;
@@ -126,6 +127,20 @@ async function route(request, env) {
       const revision = await writeRecord(env.DB, 'connection', id, data, previous?.revision ?? 0, data.allowedMarkets.join(',')); await recordAudit(env, actor, 'connection.save', id);
       return reply({ connection: { ...connectionDto(data, env), revision } }, old ? 200 : 201);
     }
+    if (connectionId && operation === 'verify' && method === 'POST') {
+      // One synchronous answer covering the whole path a run takes. Deliberately not queued:
+      // a probe is small and bounded, and the point of the screen is that you learn now.
+      const p = await bodyJson(request, 5000), record = await readRecord(env.DB, 'connection', connectionId);
+      requireThat(record, 'NOT_FOUND', 'Connection not found.', 404);
+      const connection = record.data;
+      const report = await verifyConnection(env, connection, typeof p.remoteModelId === 'string' && p.remoteModelId ? p.remoteModelId : null);
+      const checkedAt = new Date().toISOString();
+      const vision = report.steps.find((s) => s.key === 'vision');
+      connection.lastTest = { state: report.ok ? 'passed' : 'failed', checkedAt, note: (report.steps.find((s) => s.state === 'failed') ?? vision)?.detail ?? 'Checked.' };
+      await writeRecord(env.DB, 'connection', connectionId, connection, record.revision, connection.allowedMarkets.join(','));
+      await recordAudit(env, actor, 'connection.verify', connectionId);
+      return reply({ ...report, connection: connectionDto(connection, env) });
+    }
     if (connectionId && operation && method === 'POST') {
       const p = await bodyJson(request, 5000), record = await readRecord(env.DB, 'connection', connectionId); requireThat(record, 'NOT_FOUND', 'Connection not found.', 404);
       const connection = validateConnection(record.data, env); let page;
@@ -135,7 +150,9 @@ async function route(request, env) {
       if (operation === 'refresh-models') {
         const existing = await listRecords(env.DB, 'model');
         for (const m of page.models) if (!existing.some(x => x.connectionId === connectionId && x.remoteModelId === m.remoteModelId)) {
-          const id = crypto.randomUUID(), model = { ...m, id, connectionId, enabled: false, structuredOutput: true, coordinateConvention: 'xywh_normalized', capabilities: {}, maxOutputTokens: Math.min(m.providerMetadata.outputTokenLimit ?? 8192, 32768), createdAt: new Date().toISOString() };
+          // Refreshed models arrive enabled. Arriving disabled is why a real model sat unusable while a
+          // hand-typed, non-existent one stayed routed; the route still has to name one explicitly.
+          const id = crypto.randomUUID(), model = { ...m, id, connectionId, enabled: true, structuredOutput: true, coordinateConvention: 'xywh_normalized', capabilities: {}, maxOutputTokens: Math.min(m.providerMetadata.outputTokenLimit ?? 8192, 32768), createdAt: new Date().toISOString() };
           await writeRecord(env.DB, 'model', id, model, 0, connection.allowedMarkets.join(','));
         }
       }

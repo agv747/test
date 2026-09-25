@@ -8,7 +8,7 @@ import { demoNavigation, simplifyDemoMarkup } from './demo-ui.js';
 
 const titles = { 'tw/overview': 'Planogram Check', 'tw/audits/new': 'Start cabinet audit', 'tw/audits/detail': 'Cabinet audit', 'tw/planograms': 'Planogram library', 'tw/planograms/detail': 'Reference planogram', 'tw/issues': 'Execution issues', 'admin/ai': 'AI models & connections' };
 export const title = ctx => titles[ctx.path] ?? 'Retail Execution Intelligence';
-export const subtitle = ctx => ctx.path === 'admin/ai' ? 'Connections, capability checks and independent market defaults' : 'Approved layout · Visible evidence · Verified follow-up';
+export const subtitle = ctx => ctx.path === 'admin/ai' ? 'One provider, one check, one model per module' : 'Approved layout · Visible evidence · Verified follow-up';
 const state = { error: '', message: '', busy: false, selectedSlot: 'R1C1', captureId: null, slots: [], run: null, poll: null, planId: null, plan: null, mobileTab: 'photo', filter: '', filters: {}, openIssue: null };
 const pct = n => n == null ? '—' : `${Number((n * 100).toFixed(1))}%`;
 export const time = value => value ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Taipei', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : 'Not captured';

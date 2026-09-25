@@ -6,21 +6,86 @@ import { setActiveProvider } from '../services/recognition/provider.js';
 import { updateConfig } from '../store.js';
 
 const providers = { gemini: 'Google Gemini', openai: 'OpenAI', anthropic: 'Anthropic Claude', openai_compatible: 'OpenAI-compatible' };
-const q = { tab: 'setup', connectionId: null, modelId: null, modelDraft: null, pollGeneration: 0, provider: 'gemini', run: null, experiment: null, timer: null, nextCursor: null, cursorConnectionId: null, notice: '' };
+const q = { tab: 'connect', report: null, probeModelId: null, verifying: false, connectionId: null, modelId: null, modelDraft: null, pollGeneration: 0, provider: 'gemini', run: null, experiment: null, timer: null, nextCursor: null, cursorConnectionId: null, notice: '' };
 const btn = (action, text, attrs = '') => `<button type="button" class="btn btn--sm" data-action="${action}" ${attrs}>${text}</button>`;
 const option = (id, name, selected) => `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>${esc(name)}</option>`;
 const badge = (label, good = false) => `<span class="rei-badge ${good ? 'rei-badge--good' : 'rei-badge--neutral'}">${esc(label)}</span>`;
 const date = value => value ? new Date(value).toLocaleString('en-GB', { timeZone: 'Asia/Taipei' }) : 'Never';
+/**
+ * One screen: connect, test, use.
+ *
+ * What this replaces had six tabs for three decisions, and none of its checks tested the path a
+ * run takes — "test credentials" listed models and passed while every audit failed, the image
+ * probe lived on another tab, and both answered through the job queue a minute later. A model
+ * id could be typed by hand and routed without the provider being asked whether it exists.
+ *
+ * The steps are numbered because they are ordered: a key that does not work makes the model
+ * list meaningless, and a model the key does not offer makes the choice meaningless.
+ */
+const STEP_MARK = { passed: '\u2713', warned: '!', failed: '\u2715', not_reached: '\u00b7' };
 export function render(ctx) {
   const { actor, auth, ai } = client.getExecution();
-  const tab = ctx.params.tab ?? q.tab; q.tab = tab;
-  return `<div class="rei-heading"><div><h2>AI settings</h2><p class="muted">Connect a provider, choose a model and save.</p></div>${actor ? `<div class="toolbar">${badge(actor.name, true)}${btn('ai-refresh', 'Refresh')}${btn('ai-signout', 'Sign out')}</div>` : ''}</div>
-    ${!actor ? accessPanel(auth) : ''}
-    <div class="rei-tabs" role="tablist">${['setup', 'connections'].map(t => `<button role="tab" aria-selected="${t === tab}" class="${t === tab ? 'active' : ''}" data-action="ai-tab" data-tab="${t}">${t === 'setup' ? 'Models for recognition' : 'Connections'}</button>`).join('')}</div>
-    <details ${['models', 'checks', 'routing', 'compare'].includes(tab) ? 'open' : ''}><summary>Advanced settings</summary><div class="toolbar mt">${['models', 'checks', 'routing', 'compare'].map(t => btn('ai-tab', {models: 'Model details', checks: 'Optional image tests', routing: 'Advanced defaults', compare: 'Compare models'}[t], `data-tab="${t}"`)).join('')}</div></details>
+  const tab = (ctx.params.tab ?? q.tab) === 'compare' ? 'compare' : 'connect';
+  q.tab = tab;
+  if (!actor) {
+    return `<div class="rei-heading"><div><h2>AI settings</h2><p class="muted">Connect a provider, test it, choose a model.</p></div></div>
+      ${accessPanel(auth)}
+      <div class="rei-provider-cards">${Object.entries(providers).map(([key, name]) => `<div class="card"><span class="rei-provider-icon">${{ gemini: '\u2726', openai: '\u25c6', anthropic: '\u25c9', openai_compatible: '\u25a3' }[key]}</span><h3>${esc(name)}</h3><p class="small muted">Not configured</p></div>`).join('')}</div>`;
+  }
+  return `<div class="rei-heading"><div><h2>AI settings</h2><p class="muted">Connect a provider, test it, choose a model.</p></div>
+      <div class="toolbar">${badge(esc(actor.name), true)}${btn('ai-refresh', 'Reload')}${btn('ai-signout', 'Sign out')}</div></div>
+    <div class="rei-tabs" role="tablist">${[['connect', 'Connection'], ['compare', 'Compare models']].map(([id, label]) => `<button role="tab" aria-selected="${id === tab}" class="${id === tab ? 'active' : ''}" data-action="ai-tab" data-tab="${id}">${label}</button>`).join('')}</div>
     ${q.notice ? `<p role="status" class="rei-notice">${esc(q.notice)}</p>` : ''}
-    ${!actor ? `<div class="rei-provider-cards">${Object.entries(providers).map(([key, name]) => `<div class="card"><span class="rei-provider-icon">${{ gemini: '✦', openai: '◎', anthropic: 'A', openai_compatible: '↗' }[key]}</span><h3>${name}</h3>${badge('Not configured')}<p class="small muted mt">${key === 'openai_compatible' ? 'Manual model IDs · Responses or Chat Completions · approved hosts only' : 'Discover models · Test image capability · Set market-specific defaults'}</p></div>`).join('')}</div>` : !ai ? '<div class="card">Loading model configuration…</div>' : tab === 'setup' ? setup(ai, actor) : tab === 'connections' ? connections(ai, actor) : tab === 'models' ? models(ai, actor) : tab === 'routing' ? routing(ai, actor) : tab === 'checks' ? checks(ai, actor) : compare(ai, actor)}
-    ${q.run && ['checks', 'compare'].includes(tab) ? runPanel(q.run) : ''}`;
+    ${tab === 'connect' ? connectScreen(ai, actor) : compare(ai, actor)}
+    ${q.run && tab === 'compare' ? runPanel(q.run) : ''}`;
+}
+function connectScreen(ai, actor) {
+  if (!can(actor, 'ai.manage')) return '<div class="card">Your administrator connects the provider and selects the models used for recognition.</div>';
+  const connection = ai.connections.find(c => c.id === q.connectionId) ?? ai.connections[0] ?? null;
+  q.connectionId = connection?.id ?? null;
+  return `${providerCard(ai, connection)}${testCard(ai, connection)}${useCard(ai, connection)}`;
+}
+/** Step 1. One provider, one key. Everything else about a connection has a working default. */
+function providerCard(ai, connection) {
+  const provider = connection?.provider ?? q.provider;
+  const stored = connection?.credentialConfigured;
+  return `<section class="card rei-step-card"><div class="rei-step-head"><span class="rei-step-n">1</span><h3>Provider and key</h3>${stored ? badge('Key saved', true) : badge('No key')}</div>
+    <form data-form="ai-connect" class="rei-form-grid">
+      <label>Provider<select name="provider" ${connection ? 'disabled' : ''}>${Object.entries(providers).map(([k, n]) => option(k, n, provider)).join('')}</select></label>
+      <label>API key<input type="password" name="apiKey" autocomplete="off" placeholder="${stored ? 'Saved \u2014 type to replace' : 'Paste the provider key'}" ${stored ? '' : 'required'}></label>
+      <p class="small muted rei-full">The key is encrypted and stored with this application, so it does not depend on a Worker secret. ${connection?.credentialSource === 'environment' ? 'This connection currently reads a Worker secret instead; saving a key here switches it over.' : ''}</p>
+      <div class="toolbar rei-full"><button class="btn btn--primary" type="submit">${stored ? 'Replace key' : 'Save key'}</button>${connection ? btn('ai-new-connection', 'Use a different provider') : ''}</div>
+    </form></section>`;
+}
+/** Step 2. The check is the run: credential, then listing, then a real image through the model. */
+function testCard(ai, connection) {
+  const listed = q.report?.models ?? [];
+  const chosen = q.probeModelId ?? listed[0]?.remoteModelId ?? '';
+  return `<section class="card rei-step-card"><div class="rei-step-head"><span class="rei-step-n">2</span><h3>Test the connection</h3>${connection?.lastTest ? `<span class="small muted">Last checked ${esc(date(connection.lastTest.checkedAt))}</span>` : ''}</div>
+    ${!connection ? '<p class="small muted">Save a key first.</p>' : `
+    <div class="toolbar rei-wrap">
+      ${listed.length ? `<label class="rei-inline-field">Model to test<select data-action="ai-probe-model">${listed.map(m => option(m.remoteModelId, `${m.displayName ?? m.remoteModelId}`, chosen)).join('')}</select></label>` : '<span class="small muted">The model list appears after the first check.</span>'}
+      <button class="btn btn--primary" type="button" data-action="ai-verify" data-id="${esc(connection.id)}">${q.verifying ? 'Checking\u2026' : 'Check connection'}</button>
+    </div>
+    ${q.report ? `<ol class="rei-steps">${q.report.steps.map(s => `<li class="rei-step rei-step--${s.state}"><span class="rei-step-mark" aria-hidden="true">${STEP_MARK[s.state]}</span><div><strong>${esc(s.label)}</strong>${s.durationMs != null ? `<span class="small muted"> \u00b7 ${(s.durationMs / 1000).toFixed(1)} s</span>` : ''}<p class="small">${esc(s.detail ?? '')}</p></div></li>`).join('')}</ol>` : '<p class="small muted mt">Checks the key, asks the provider which models it offers, then sends a synthetic test image to the model you pick. Nothing from your shelves is used.</p>'}`}
+    </section>`;
+}
+/** Step 3. Only models this key actually offers, and one choice per module. */
+function useCard(ai, connection) {
+  const listedIds = new Set((q.report?.models ?? []).map(m => m.remoteModelId));
+  return `<section class="card rei-step-card"><div class="rei-step-head"><span class="rei-step-n">3</span><h3>Use it</h3></div>
+    ${[['TW', 'Planogram Check', TASK_TW], ['SG', 'Price Validation', TASK_SG]].map(([market, label, task]) => {
+      const current = ai.routes.find(r => r.task === task);
+      const choices = ai.models.filter(m => m.connectionId === connection?.id && (!listedIds.size || listedIds.has(m.remoteModelId) || m.id === current?.defaultModelId));
+      const active = ai.models.find(m => m.id === current?.defaultModelId);
+      const orphan = active && listedIds.size && !listedIds.has(active.remoteModelId);
+      return `<form class="rei-form-grid rei-use-row" data-form="ai-default" data-market="${market}" data-task="${task}">
+        <label>${label}<select name="modelId" required>${choices.length ? '' : '<option value="">Check the connection first</option>'}${choices.map(m => option(m.id, m.displayName ?? m.remoteModelId, current?.defaultModelId)).join('')}</select></label>
+        <button class="btn" type="submit" ${choices.length ? '' : 'disabled'}>Save</button>
+        ${orphan ? `<p class="small rei-warn rei-full">${esc(active.remoteModelId)} is saved here but this key does not offer it. Pick one from the list.</p>` : ''}
+      </form>`;
+    }).join('')}
+    <p class="small muted">Saving affects new analyses only. Runs already recorded keep the model they used.</p></section>`;
 }
 function accessPanel(auth) {
   return `<div class="card rei-access"><div><h3>Private AI administration</h3><p>Sign in to configure credentials and send images to real models.</p><p class="small muted">${auth.authConfigured ? 'Use your administrator-issued access token.' : 'Deployment setup required: add a random ADMIN_ACCESS_TOKEN and an AI_CREDENTIALS_ENCRYPTION_KEY in Cloudflare Worker secrets. Existing provider environment keys can also be used.'}</p><p class="small"><a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer">Open Cloudflare dashboard ↗</a></p></div><form data-form="ai-signin"><label>Access token<input type="password" name="accessToken" required autocomplete="off" minlength="3" maxlength="512" pattern="[A-Za-z0-9_-]+" placeholder="Administrator-issued token"></label><button class="btn btn--primary mt" type="submit">Sign in</button><p class="xsmall muted mt">The token is used for an HttpOnly session. Model API keys are entered only after sign-in.</p></form></div>`;
@@ -89,6 +154,15 @@ export async function onAction(action, el, ctx) {
   const { ai } = client.getExecution();
   q.notice = '';
   if (action === 'ai-tab') { clearTimeout(q.timer); q.pollGeneration++; q.tab = el.dataset.tab; ctx.setParams({ tab: q.tab }); }
+  else if (action === 'ai-verify') {
+    // Synchronous on purpose: the answer is the reason this screen exists.
+    q.verifying = true; ctx.render();
+    try { q.report = await client.api(`/ai/connections/${el.dataset.id}/verify`, { remoteModelId: q.probeModelId ?? null }); }
+    catch (e) { q.report = null; q.notice = e.message; }
+    finally { q.verifying = false; }
+    await client.refreshAi();
+  }
+  else if (action === 'ai-probe-model') { q.probeModelId = el.value; }
   else if (action === 'ai-refresh') await client.refreshAi();
   else if (action === 'ai-signout') { await client.signOut(); q.run = null; q.experiment = null; }
   else if (action === 'ai-new-connection') { q.connectionId = null; q.provider = 'gemini'; }
@@ -104,6 +178,7 @@ export async function onAction(action, el, ctx) {
   else if (action === 'ai-adopt-run') ctx.navigate('tw/audits/detail', { id: el.dataset.captureId, run: el.dataset.id });
 }
 export function onChange(target, ctx) {
+  if (target.dataset.action === 'ai-probe-model') { q.probeModelId = target.value; return; }
   if (target.dataset.action === 'ai-provider') { q.provider = target.value; ctx.render(); return true; }
   return false;
 }
@@ -119,6 +194,17 @@ export async function onSubmit(form, ctx) {
     await client.api(`/ai/routes/${form.dataset.market}/${form.dataset.task}`, { defaultModelId: model.id, allowedModelIds: [model.id], fallbackModelId: null, fieldOverride: false, timeoutMs: 60000, maxOutputTokens: Math.min(8192, model.maxOutputTokens ?? 8192), expectedRevision: current?.revision ?? 0 }, 'PUT');
     if (form.dataset.market === 'SG') { setActiveProvider('configured-sg'); updateConfig({ recognition_model: 'configured-sg' }); }
     q.notice = 'Model saved. Open the module, upload a photo and start analysis.';
+  } else if (type === 'ai-connect') {
+    const existing = ai.connections.find(c => c.id === q.connectionId), key = p.get('apiKey');
+    form.querySelector('[name="apiKey"]').value = '';
+    const provider = existing?.provider ?? p.get('provider');
+    const saved = await client.api(`/ai/connections${existing ? `/${existing.id}` : ''}`, {
+      name: providers[provider], provider, allowedMarkets: ['SG', 'TW'], enabled: true,
+      expectedRevision: existing?.revision ?? 0, ...(key ? { apiKey: key } : {}),
+    });
+    q.connectionId = saved.connection?.id ?? existing?.id ?? null;
+    q.report = null;
+    q.notice = 'Key saved. Check the connection to see which models it offers.';
   } else if (type === 'ai-connection') {
     const c = ai.connections.find(c => c.id === q.connectionId), key = p.get('apiKey');
     form.querySelector('[name="apiKey"]').value = '';

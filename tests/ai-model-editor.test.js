@@ -1,50 +1,62 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('Model editing is isolated from image polling and failed saves preserve fields', async t => {
-  const data = new Map([['rei.last-probe', 'probe-1']]);
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['TW'] }, authConfigured: true });
-    if (url.endsWith('/ai/state')) return Response.json({ models: [{ id: 'm1', connectionId: 'c1', displayName: 'Original', remoteModelId: 'fixture', enabled: true, revision: 3 }], connections: [{ id: 'c1', name: 'Gemini', enabled: true }], routes: [] });
-    if (url.includes('/ai/models/')) { assert.equal(options.method, 'PATCH'); return Response.json({ error: { code: 'REVISION_CONFLICT', message: 'Reload required' } }, { status: 409 }); }
-    if (url.includes('/ai/runs/')) return Response.json({ id: 'probe-1', state: 'processing' });
+/**
+ * The connection screen, which replaced six tabs and three disagreeing checks.
+ *
+ * What these pin is the behaviour that was missing when a model that does not exist spent two
+ * days as the configured default: the check reports each step separately, and a model the key
+ * does not offer is called out rather than silently accepted.
+ */
+const state = (over = {}) => ({
+  models: [{ id: 'm2', connectionId: 'c2', displayName: 'Gemini fixture', remoteModelId: 'fixture', enabled: true, revision: 1, maxOutputTokens: 4096 }],
+  connections: [{ id: 'c2', name: 'Google Gemini', provider: 'gemini', enabled: true, credentialConfigured: true, credentialSource: 'encrypted', allowedMarkets: ['SG', 'TW'], revision: 2 }],
+  routes: [], secretStoreConfigured: true, environmentCredentials: {}, ...over,
+});
+
+test('the check reports every step, and names a model the key does not offer', async t => {
+  const report = {
+    ok: false,
+    steps: [
+      { key: 'credential', label: 'API key', state: 'passed', detail: 'Stored in this application, encrypted.', durationMs: null },
+      { key: 'listing', label: 'Model list', state: 'passed', detail: '61 models offered by this key.', durationMs: 420 },
+      { key: 'vision', label: 'Image recognition', state: 'failed', detail: 'This key does not offer gemini-3.7-flash. Pick one of the 61 models listed above.', durationMs: 900 },
+    ],
+    models: [{ remoteModelId: 'fixture', displayName: 'Gemini fixture' }],
+  };
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['SG', 'TW'] }, authConfigured: true });
+    if (url.endsWith('/ai/state')) return Response.json(state({ routes: [{ task: 'tw_planogram_recognition', defaultModelId: 'ghost', revision: 1 }], models: [{ id: 'ghost', connectionId: 'c2', displayName: 'Gemini 3.7 Flash', remoteModelId: 'gemini-3.7-flash', enabled: true, revision: 1 }] }));
+    if (url.endsWith('/verify')) return Response.json(report);
     throw new Error(`Unexpected request ${url}`);
   });
-  const oldStorage = globalThis.localStorage, oldLocation = globalThis.location;
-  globalThis.localStorage = { getItem: k => data.get(k) ?? null, setItem: (k,v) => data.set(k,v), removeItem: k => data.delete(k) };
-  globalThis.location = { hash: '#/admin/ai?tab=models' };
-  t.after(() => { globalThis.localStorage = oldStorage; globalThis.location = oldLocation; });
+  const oldStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  t.after(() => { globalThis.localStorage = oldStorage; });
   const client = await import('../public/app/execution/client.js');
   const ui = await import('../public/app/execution/ui-ai.js');
   await client.initExecution();
-  let callback, scheduled = 0, renders = 0;
-  t.mock.method(globalThis, 'setTimeout', cb => { callback = cb; scheduled++; return 1; });
-  t.mock.method(globalThis, 'clearTimeout', () => {});
-  const ctx = { params: { tab: 'models' }, render: () => renders++, setParams: () => {} };
-  await ui.onAction('ai-edit-model', { dataset: { id: 'm1' } }, ctx);
-  let html = ui.render(ctx);
-  assert.ok(!html.includes('data-action="ai-test-model"'));
-  assert.ok(html.indexOf('data-form="ai-model"') < html.indexOf('Connection-specific models'));
-  ui.mount(ctx); assert.equal(scheduled, 0);
-  // A poll already in flight must not render after switching to the editor.
-  ctx.params.tab = 'checks'; ui.render(ctx); ui.mount(ctx); assert.equal(scheduled, 1);
-  const pending = callback();
-  await ui.onAction('ai-tab', { dataset: { tab: 'models' } }, ctx);
-  ctx.params.tab = 'models'; ui.render(ctx); ui.mount(ctx);
-  await pending; assert.equal(renders, 0);
-  const values = new Map(Object.entries({ connectionId: 'c1', remoteModelId: 'fixture', displayName: 'My unsaved name', maxOutputTokens: '4096', coordinateConvention: 'xywh_normalized', pricing: '', enabled: 'on' }));
-  t.mock.method(globalThis, 'FormData', function () { return { get: k => values.get(k) ?? null, has: k => values.has(k) }; });
-  await assert.rejects(() => ui.onSubmit({ dataset: { form: 'ai-model' } }, ctx), /Reload required/);
-  html = ui.render(ctx); assert.ok(html.includes('value="My unsaved name"')); assert.ok(html.includes('value="4096"'));
-  ctx.params.tab = 'checks'; html = ui.render(ctx); assert.ok(html.includes('data-action="ai-test-model"'));
+  const ctx = { params: { tab: 'connect' }, render: () => {}, setParams: () => {} };
+
+  await ui.onAction('ai-verify', { dataset: { id: 'c2' } }, ctx);
+  const html = ui.render(ctx);
+  for (const label of ['API key', 'Model list', 'Image recognition']) assert.match(html, new RegExp(label));
+  assert.match(html, /61 models offered by this key/);
+  assert.match(html, /rei-step--passed/);
+  assert.match(html, /rei-step--failed/);
+  // The saved default is not in the provider's list, so the screen must say so.
+  assert.match(html, /gemini-3\.7-flash is saved here but this key does not offer it/);
+  // The removed tabs must not come back with their hand-typed model id field.
+  assert.ok(!html.includes('name="remoteModelId"'));
+  assert.ok(!html.includes('name="timeoutSeconds"'));
+  assert.ok(!html.includes('name="allowedModelIds"'));
 });
 
-test('Simple setup selects a model without probes or advanced routing fields', async t => {
-  let saved, enabled = false;
+test('choosing a model saves exactly one route, with no advanced fields', async t => {
+  let saved;
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['TW'] } });
-    if (url.endsWith('/ai/state')) return Response.json({ models: [{ id: 'm2', connectionId: 'c2', displayName: 'Gemini fixture', remoteModelId: 'fixture', enabled, revision: 1, maxOutputTokens: 4096 }], connections: [{ id: 'c2', name: 'Gemini', enabled: true, credentialConfigured: true, allowedMarkets: ['TW'] }], routes: [] });
-    if (url.endsWith('/ai/models/m2')) { enabled = true; assert.equal(JSON.parse(options.body).enabled, true); return Response.json({}); }
+    if (url.endsWith('/session')) return Response.json({ actor: { id: 'admin', role: 'admin', markets: ['SG', 'TW'] } });
+    if (url.endsWith('/ai/state')) return Response.json(state());
     if (url.includes('/ai/routes/')) { saved = JSON.parse(options.body); return Response.json({}); }
     throw new Error(`Unexpected request ${url}`);
   });
@@ -54,14 +66,15 @@ test('Simple setup selects a model without probes or advanced routing fields', a
   const client = await import('../public/app/execution/client.js');
   const ui = await import('../public/app/execution/ui-ai.js');
   await client.initExecution();
-  const ctx = { params: { tab: 'setup' } };
-  const html = ui.render(ctx);
-  assert.match(html, /Models for recognition/); assert.match(html, /Gemini fixture/);
-  assert.ok(!html.includes('name="timeoutSeconds"')); assert.ok(!html.includes('name="allowedModelIds"'));
-  assert.ok(!html.includes('data-action="ai-test-model"')); assert.ok(!html.includes('runPanel'));
-  t.mock.method(globalThis, 'FormData', function () { return { get: k => k === 'modelId' ? 'm2' : null }; });
+  const ctx = { params: { tab: 'connect' } };
+  assert.match(ui.render(ctx), /Gemini fixture/);
+
+  t.mock.method(globalThis, 'FormData', function () { return { get: k => (k === 'modelId' ? 'm2' : null) }; });
   await ui.onSubmit({ dataset: { form: 'ai-default', market: 'TW', task: 'tw_planogram_recognition' } }, ctx);
-  assert.equal(enabled, true); assert.equal(saved.defaultModelId, 'm2'); assert.deepEqual(saved.allowedModelIds, ['m2']);
-  assert.equal(saved.maxOutputTokens, 4096); assert.equal(saved.fieldOverride, false); assert.equal(saved.fallbackModelId, null);
+  assert.equal(saved.defaultModelId, 'm2');
+  assert.deepEqual(saved.allowedModelIds, ['m2']);
+  assert.equal(saved.maxOutputTokens, 4096);
+  assert.equal(saved.fieldOverride, false);
+  assert.equal(saved.fallbackModelId, null);
   assert.match(ui.render(ctx), /Model saved/);
 });
