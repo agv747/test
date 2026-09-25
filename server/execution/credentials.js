@@ -18,7 +18,10 @@ export async function getCredential(env, connection) {
     // Name the variable and where it lives. "Not configured" sent the last reader to re-check
     // settings inside the app, where nothing was wrong: the value is a Worker secret, and the
     // app can only report its absence, never set it.
-    requireThat(secret, 'AI_NOT_CONFIGURED', `This connection reads its key from the Worker secret ${ENV_KEYS[connection.provider] ?? 'for this provider'}, which is not set on the deployment. Add it under Workers & Pages → price-check → Settings → Variables and Secrets, or switch the connection to a stored key.`, 503);
+    // "Add it" was not enough: editing Variables and Secrets only stages the change, and the
+    // dashboard applies it when Deploy is pressed. A key added without that step is invisible
+    // here and looks identical to one never added, which cost several rounds to establish.
+    requireThat(secret, 'AI_NOT_CONFIGURED', `This connection reads its key from the Worker secret ${ENV_KEYS[connection.provider] ?? 'for this provider'}, which is not set on the deployment. Add it under Workers & Pages → price-check → Settings → Variables and Secrets and press Deploy — the dashboard stages the change until you do. Check the result at /api/config, which reports whether each key is present. Or switch this connection to a stored key, which lives in the database instead.`, 503);
     return secret;
   }
   requireThat(connection.encryptedCredential, 'AI_NOT_CONFIGURED', 'Configure a credential for this connection.', 503);
