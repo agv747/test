@@ -303,3 +303,48 @@ test('the connection check resolves each module exactly as a run does', async ()
   assert.equal(refused.steps[0].state, 'passed');
   assert.equal(refused.steps[1].state, 'warned');
 });
+
+test('a 7×30 cabinet is recognised as seven row requests and merged back into one result', async () => {
+  const { splitInput, partPlan, runRecognition } = await import('../server/execution/adapters.js');
+  const keyOf = (r, c) => `R${r}C${c}`;
+  const geometry = [];
+  for (let row = 1; row <= 7; row++) for (let column = 1; column <= 30; column++) geometry.push({ key: keyOf(row, column), row, column, views: [{ imageId: 'probe-image', bbox: [(column - 1) / 30, (row - 1) / 7, 1 / 30, 1 / 7], primary: true }] });
+  const cabinet = { ...probeInput(TASK_TW), catalogue: [{ id: 'S1', code: 'S1', name: 'Fixture SKU' }], geometry };
+
+  assert.deepEqual(partPlan(7, 30), { parts: 7, rowsPerPart: 1, positionsPerPart: 30 });
+  assert.deepEqual(partPlan(2, 10), { parts: 1, rowsPerPart: 2, positionsPerPart: 20 }, 'the demo cabinet stays one request');
+  const parts = splitInput(cabinet);
+  assert.equal(parts.length, 7);
+  assert.ok(parts.every(p => p.geometry.length === 30 && p.part.otherKeys.length === 180));
+  assert.deepEqual(parts[2].part.rows, [3, 3]);
+  assert.match(recognitionPrompt(parts[2]), /covers rows 3–3 of the fixture only \(part 3 of 7\)/);
+  assert.equal(splitInput(probeInput(TASK_TW)).length, 1);
+  assert.equal(splitInput(probeInput(TASK_SG)).length, 1, 'Price Validation is never split');
+
+  // The model sees the whole photograph, so every part describes all 210 positions, plus one
+  // detection it could not place. Each part keeps its own row; nothing is lost or duplicated.
+  const everything = { schemaVersion: '1', task: TASK_TW, products: [
+    ...geometry.map(g => ({ detectionId: `d-${g.key}`, imageId: 'probe-image', bbox: g.views[0].bbox, slotKeyCandidate: g.key, skuCandidateId: 'S1', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' })),
+    { detectionId: 'd-unplaced', imageId: 'probe-image', bbox: [0.4, 0.4, 0.1, 0.1], slotKeyCandidate: null, skuCandidateId: null, alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' },
+  ], proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: ['glare'] };
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return Response.json({ ...geminiResponse(everything), usageMetadata: { candidatesTokenCount: 100, thoughtsTokenCount: 50 } }); };
+  const merged = await runRecognition(conn('gemini'), 'fixture-key', model, cabinet, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl });
+  assert.equal(calls, 7);
+  assert.equal(merged.result.products.length, 210);
+  assert.deepEqual(new Set(merged.result.products.map(p => p.slotKeyCandidate)).size, 210);
+  assert.equal(new Set(merged.result.products.map(p => p.detectionId)).size, 210);
+  assert.deepEqual(merged.result.qualityWarnings, ['glare']);
+  assert.equal(merged.usage.candidatesTokenCount, 700);
+  assert.equal(merged.parts.length, 7);
+
+  // A position that exists nowhere in the cabinet is still an invented slot, split or not.
+  const invented = { ...everything, products: [{ ...everything.products[0], slotKeyCandidate: 'R99C1' }] };
+  await assert.rejects(() => runRecognition(conn('gemini'), 'fixture-key', model, cabinet, { timeoutMs: 1000 }, { fetchImpl: async () => Response.json(geminiResponse(invented)) }), { code: 'AI_INVALID_OUTPUT' });
+
+  // One part failing fails the run, and says which part.
+  let n = 0;
+  const oneFails = async () => (++n === 4 ? Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 }) : Response.json(geminiResponse(everything)));
+  await assert.rejects(() => runRecognition({ ...conn('gemini') }, 'fixture-key', { ...model, structuredOutput: false }, cabinet, { timeoutMs: 1000 }, { fetchImpl: oneFails }),
+    e => e.code === 'AI_MODEL_UNAVAILABLE' && e.part.of === 7 && e.part.succeeded === 6);
+});

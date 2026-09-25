@@ -180,7 +180,7 @@ test('a pasted key alone configures a provider end to end, with no Worker secret
   const scaled = await call(`/ai/connections/${id}/verify`, { remoteModelId: 'gemini-vision-fixture' });
   const [tw, sg] = [TASK_TW, TASK_SG].map(task => scaled.body.steps.find(s => s.key === `vision:${task}`));
   assert.equal(tw.state, 'failed', tw.detail);
-  assert.match(tw.detail, /7×30 audit \(210 positions\).*would be cut off/);
+  assert.match(tw.detail, /7×30 audit \(7 parts of 30 positions\).*would be cut off/);
   assert.equal(sg.state, 'passed', sg.detail);
   assert.equal(scaled.body.ok, false);
   DB.close();

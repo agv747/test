@@ -22,7 +22,7 @@
  * everything else about the call is the run.
  */
 import { getCredential } from './credentials.js';
-import { listProviderModels, runProvider, validateConnection } from './adapters.js';
+import { listProviderModels, partPlan, runRecognition, validateConnection } from './adapters.js';
 import { probeInput, selectModel } from './jobs.js';
 import { listRecords, readWorkspace, writeRecord } from './storage.js';
 import { TASK_TW, TASK_SG } from '../../public/app/execution/ai-contracts.js';
@@ -138,7 +138,7 @@ export async function verifyConnection(env, actor, connection, remoteModelId, { 
 
     const probedAt = Date.now();
     try {
-      const response = await runProvider(selection.connection, credential, selection.model, probeInput(module.task), { timeoutMs: selection.route.timeoutMs, maxOutputTokens: selection.route.maxOutputTokens }, { fetchImpl });
+      const response = await runRecognition(selection.connection, credential, selection.model, probeInput(module.task), { timeoutMs: selection.route.timeoutMs, maxOutputTokens: selection.route.maxOutputTokens }, { fetchImpl });
       const found = new Set((response.result?.products ?? response.result?.prices ?? []).map((x) => x.skuCandidateId));
       const both = found.has('PROBE-A') && found.has('PROBE-B');
       const name = `${esc(selection.model.displayName ?? selection.model.remoteModelId)}${routed ? '' : ' (not saved for this module yet)'}`;
@@ -146,16 +146,19 @@ export async function verifyConnection(env, actor, connection, remoteModelId, { 
         ? ` The provider did not accept the response schema (HTTP ${response.schema.rejectedWith.httpStatus}) and answered without it; the answer was still checked against the contract.`
         : '';
       const fixture = module.task === TASK_TW ? await largestFixture(env) : null;
-      const fit = fixture ? capacity(response.usage, response.requestMs ?? response.durationMs, fixture.rows * fixture.columns, selection.route) : null;
+      // A large cabinet is sent in parts at once, so what has to fit the limits is one part.
+      const plan = fixture ? partPlan(fixture.rows, fixture.columns) : null;
+      const fit = plan ? capacity(response.usage, response.requestMs ?? response.durationMs, plan.positionsPerPart, selection.route) : null;
+      const shape = plan && plan.parts > 1 ? `${plan.parts} parts of ${plan.positionsPerPart} positions` : `${fit?.slots} positions`;
       let state = both ? 'passed' : 'warned';
       let detail = `${name} · ${both
         ? 'read a synthetic test image and returned both labelled rectangles.'
         : 'answered in the right format but missed part of the test image. It will run; accuracy on a real shelf is not measured here.'}`;
       if (fit && !(fit.fitsTokens && fit.fitsTime)) {
         state = 'failed';
-        detail = `${name} read the test image, but a full ${fixture.rows}×${fixture.columns} audit (${fit.slots} positions) needs about ${fit.tokens.toLocaleString('en')} output tokens and ${fit.seconds} s at the speed measured here. This module allows ${selection.route.maxOutputTokens.toLocaleString('en')} tokens and ${Math.round(selection.route.timeoutMs / 1000)} s, so a real audit would be cut off.`;
+        detail = `${name} read the test image, but a full ${fixture.rows}×${fixture.columns} audit (${shape}) needs about ${fit.tokens.toLocaleString('en')} output tokens and ${fit.seconds} s per request at the speed measured here. This module allows ${selection.route.maxOutputTokens.toLocaleString('en')} tokens and ${Math.round(selection.route.timeoutMs / 1000)} s, so a real audit would be cut off.`;
       } else if (fit) {
-        detail += ` A full ${fixture.rows}×${fixture.columns} audit is estimated at ${fit.tokens.toLocaleString('en')} tokens and ${fit.seconds} s, within this module's limits.`;
+        detail += ` A full ${fixture.rows}×${fixture.columns} audit (${shape}) is estimated at ${fit.tokens.toLocaleString('en')} tokens and ${fit.seconds} s per request, within this module's limits.`;
       }
       Object.assign(slot, { state, durationMs: response.durationMs ?? Date.now() - probedAt, detail: detail + schemaNote });
     } catch (error) {

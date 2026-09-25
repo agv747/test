@@ -1,5 +1,5 @@
 import { DomainError, requireThat } from '../../public/app/execution/domain.js';
-import { recognitionPrompt, schemaFor, validateOutput } from '../../public/app/execution/ai-contracts.js';
+import { TASK_TW, recognitionPrompt, schemaFor, validateOutput } from '../../public/app/execution/ai-contracts.js';
 import { toBase64 } from './storage.js';
 
 export const NATIVE_BASES = { gemini: 'https://generativelanguage.googleapis.com/v1beta', openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com/v1' };
@@ -167,8 +167,72 @@ export async function runProvider(connection, credential, model, input, settings
   try { parsed = parseProviderResponse(connection.provider, connection.protocol, response.data); }
   catch (e) { Object.assign(e, { durationMs, requestId: response.requestId, schema }); throw e; }
   // `requestMs` is the answering request alone, without a rejected first try — what a speed is measured from.
-  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized'), requestId: response.requestId, durationMs, requestMs: response.durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
+  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized', { otherParts: input.part ? new Set(input.part.otherKeys) : null }), requestId: response.requestId, durationMs, requestMs: response.durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
   catch (e) { Object.assign(e, parsed, { durationMs, requestId: response.requestId, schema }); throw e; }
+}
+/**
+ * The most positions one Planogram Check request is asked to describe.
+ *
+ * A live 7×30 audit in one request never completed: its prompt alone was 29,790 tokens of
+ * geometry, and the answer was cut off at 8,192 output tokens after 7,860 went to thinking, or
+ * ran past the 60-second limit. Whole rows are kept together, so a 7×30 cabinet goes as seven
+ * requests of 30 positions, sent at once; a cabinet this small or smaller goes as one.
+ */
+export const PART_POSITIONS = 40;
+export function partPlan(rows, columns) {
+  const rowsPerPart = rows * columns <= PART_POSITIONS ? rows : Math.max(1, Math.floor(PART_POSITIONS / columns));
+  return { parts: Math.ceil(rows / rowsPerPart), rowsPerPart, positionsPerPart: rowsPerPart * columns };
+}
+export function splitInput(input) {
+  const geometry = input.geometry ?? [];
+  if (input.task !== TASK_TW || geometry.length <= PART_POSITIONS) return [input];
+  const rows = [...new Set(geometry.map(g => g.row))].sort((a, b) => a - b);
+  const columns = Math.max(...rows.map(r => geometry.filter(g => g.row === r).length));
+  const { rowsPerPart } = partPlan(rows.length, columns), parts = [];
+  for (let i = 0; i < rows.length; i += rowsPerPart) parts.push(rows.slice(i, i + rowsPerPart));
+  return parts.map((own, i) => {
+    const mine = new Set(own);
+    return { ...input, geometry: geometry.filter(g => mine.has(g.row)), part: { index: i + 1, of: parts.length, rows: [own[0], own.at(-1)], otherKeys: geometry.filter(g => !mine.has(g.row)).map(g => g.key) } };
+  });
+}
+const sumUsage = list => list.reduce((total, usage) => {
+  for (const [k, v] of Object.entries(usage ?? {})) if (Number.isFinite(v)) total[k] = (total[k] ?? 0) + v;
+  return total;
+}, {});
+/**
+ * What a run and the connection check both call: one request, or one per part of a large
+ * cabinet, merged into a single result that is validated against the whole input again.
+ */
+export async function runRecognition(connection, credential, model, input, settings, options = {}) {
+  const parts = splitInput(input);
+  if (parts.length === 1) return runProvider(connection, credential, model, input, settings, options);
+  const started = Date.now();
+  const settled = await Promise.allSettled(parts.map(part => runProvider(connection, credential, model, part, settings, options)));
+  const failed = settled.findIndex(s => s.status === 'rejected');
+  if (failed >= 0) {
+    const e = settled[failed].reason;
+    const done = settled.filter(s => s.status === 'fulfilled').length;
+    throw Object.assign(e, { part: { index: failed + 1, of: parts.length, succeeded: done }, durationMs: Date.now() - started });
+  }
+  const responses = settled.map(s => s.value);
+  const merged = { schemaVersion: '1', task: input.task, products: [], proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
+  responses.forEach((r, i) => {
+    merged.products.push(...r.result.products.map(p => ({ ...p, detectionId: `part${i + 1}-${p.detectionId}` })));
+    merged.proposedEmptySlots.push(...r.result.proposedEmptySlots);
+    merged.uncertainRegions.push(...r.result.uncertainRegions);
+    for (const w of r.result.qualityWarnings) if (!merged.qualityWarnings.includes(w)) merged.qualityWarnings.push(w);
+  });
+  const costs = responses.map(r => r.estimatedCost);
+  return {
+    // Boxes are already normalized by each part, so the whole is checked in the normalized convention.
+    result: validateOutput(merged, input, 'xywh_normalized'),
+    raw: JSON.stringify(merged), usage: sumUsage(responses.map(r => r.usage)),
+    resolvedModelId: responses[0].resolvedModelId, responseId: responses.map(r => r.responseId).filter(Boolean).join(',') || null,
+    requestId: responses[0].requestId, durationMs: Date.now() - started, requestMs: Math.max(...responses.map(r => r.requestMs ?? r.durationMs)),
+    schema: responses.find(r => r.schema)?.schema ?? null,
+    estimatedCost: costs.every(Boolean) && new Set(costs.map(c => c.currency)).size === 1 ? { ...costs[0], amount: costs.reduce((n, c) => n + c.amount, 0) } : null,
+    parts: responses.map((r, i) => ({ index: i + 1, rows: parts[i].part.rows, requestMs: r.requestMs ?? r.durationMs, usage: r.usage, schema: r.schema ?? null })),
+  };
 }
 /** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */
 export function estimateCost(usage, pricing) {

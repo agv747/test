@@ -3,7 +3,7 @@ import { TASK_TW, TASK_SG, PROMPT_VERSION } from '../../public/app/execution/ai-
 import { cellBox } from '../../public/app/execution/demo.js';
 import { initDb, readRecord, writeRecord, readMedia, digest, toBase64 } from './storage.js';
 import { connectionDto, getCredential, readEnvSecret } from './credentials.js';
-import { runProvider, validateConnection } from './adapters.js';
+import { runRecognition, validateConnection } from './adapters.js';
 import { PROBE_PNG } from './probe-image.js';
 
 export function validateRoute(route, models, connections, market, task) {
@@ -87,18 +87,18 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
     validateConnection(p.selection.connection, env);
     const credential = await getCredential(env, p.selection.connection);
     const input = { ...p.input, images: await Promise.all(p.input.images.map(async i => ({ ...i, base64: i.base64 ?? toBase64(await readMedia(env.DB, i.imageId)) }))) };
-    const response = await runProvider(p.selection.connection, credential, p.selection.model, input, { timeoutMs: Math.min(p.selection.route.timeoutMs, p.deadline - Date.now()), maxOutputTokens: p.selection.route.maxOutputTokens, repair: p.repairNext }, { fetchImpl });
+    const response = await runRecognition(p.selection.connection, credential, p.selection.model, input, { timeoutMs: Math.min(p.selection.route.timeoutMs, p.deadline - Date.now()), maxOutputTokens: p.selection.route.maxOutputTokens, repair: p.repairNext }, { fetchImpl });
     if (p.purpose === 'capability') {
       const found = new Set((response.result.products ?? response.result.prices ?? []).map(x => x.skuCandidateId));
       requireThat(found.has('PROBE-A') && found.has('PROBE-B'), 'AI_INVALID_OUTPUT', 'The API accepted the image but did not identify both labelled test rectangles.');
     }
-    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null });
+    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null, parts: response.parts ?? null });
     p.result = response.result; p.raw = response.raw; p.resolvedModelId = response.resolvedModelId; p.completedAt = new Date().toISOString();
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'verified');
     await persistRun(env.DB, row, p, 'needs_review');
   } catch (e) {
     const ours = typeof e.code === 'string', code = ours ? e.code : 'AI_NETWORK_ERROR';
-    Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
+    Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, part: e.part ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
     const transportAttempts = p.attempts.filter(a => !a.repair).length;
     const repair = code === 'AI_INVALID_OUTPUT' && !p.attempts.some(a => a.repair);
     const retry = e.retryable && transportAttempts < 2 && !attempt.repair;
