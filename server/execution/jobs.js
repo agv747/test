@@ -92,13 +92,13 @@ export async function executeRun(env, runId, { fetchImpl = fetch } = {}) {
       const found = new Set((response.result.products ?? response.result.prices ?? []).map(x => x.skuCandidateId));
       requireThat(found.has('PROBE-A') && found.has('PROBE-B'), 'AI_INVALID_OUTPUT', 'The API accepted the image but did not identify both labelled test rectangles.');
     }
-    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null, parts: response.parts ?? null });
+    Object.assign(attempt, { state: 'succeeded', durationMs: response.durationMs, usage: response.usage, requestId: response.requestId, responseId: response.responseId, estimatedCost: response.estimatedCost, schema: response.schema ?? null, thinking: response.thinking ?? null, parts: response.parts ?? null });
     p.result = response.result; p.raw = response.raw; p.resolvedModelId = response.resolvedModelId; p.completedAt = new Date().toISOString();
     if (p.purpose === 'capability') await recordCapability(env, p, row.id, 'verified');
     await persistRun(env.DB, row, p, 'needs_review');
   } catch (e) {
     const ours = typeof e.code === 'string', code = ours ? e.code : 'AI_NETWORK_ERROR';
-    Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, part: e.part ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
+    Object.assign(attempt, { state: 'failed', error: { code, message: ours ? e.message : 'Recognition processing failed.' }, durationMs: e.durationMs ?? Date.now() - now, httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null, schema: e.schema ?? null, thinking: e.thinking ?? null, part: e.part ?? null, usage: e.usage ?? null, requestId: e.requestId ?? null, raw: e.raw ?? null });
     const transportAttempts = p.attempts.filter(a => !a.repair).length;
     const repair = code === 'AI_INVALID_OUTPUT' && !p.attempts.some(a => a.repair);
     const retry = e.retryable && transportAttempts < 2 && !attempt.repair;

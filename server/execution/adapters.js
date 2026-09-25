@@ -99,20 +99,39 @@ export async function listProviderModels(connection, credential, cursor = null, 
   return { models: list.map(m => ({ remoteModelId: (m.name ?? m.id).replace(/^models\//, ''), displayName: m.displayName ?? m.display_name ?? m.id ?? m.name, providerMetadata: { inputTokenLimit: m.inputTokenLimit ?? null, outputTokenLimit: m.outputTokenLimit ?? null, supportedGenerationMethods: m.supportedGenerationMethods ?? null } })), nextCursor: data.nextPageToken ?? (data.has_more ? data.last_id ?? list.at(-1)?.id : null) };
 }
 const sendsSchema = (connection, model, input) => model.structuredOutput !== false && !(connection.provider === 'gemini' && input.task === TASK_TW);
+/**
+ * How much a Gemini model may think before answering.
+ *
+ * Left to itself, gemini-3.8-flash spent 7,860 tokens thinking about one row of 30 positions and
+ * was cut off at 8,192 with 325 tokens of answer — the same 7,860 it spent on the whole 7×30
+ * cabinet. Reading pack faces into a fixed list of positions does not need that, so recognition
+ * asks for the lowest level: `thinkingLevel` on Gemini 3 and later, a small `thinkingBudget` on
+ * 2.5 Flash. Any other model is left at its default. A model that rejects the setting is asked
+ * again without it (see runProvider).
+ */
+export function geminiThinking(remoteModelId) {
+  const m = /^gemini-(\d+)(?:\.(\d+))?-(flash|pro)/.exec(String(remoteModelId ?? '').replace(/^models\//, ''));
+  if (!m) return null;
+  const major = Number(m[1]), minor = Number(m[2] ?? 0);
+  if (major >= 3) return { thinkingLevel: 'low' };
+  if (major === 2 && minor === 5 && m[3] === 'flash') return { thinkingBudget: 1024 };
+  return null;
+}
 export function buildProviderRequest(connection, model, input, settings = {}) {
   let prompt = recognitionPrompt(input, settings.repair);
   if (model.coordinateConvention === 'yxyx_1000') prompt += '\nFor this explicitly configured model, express every bbox as [ymin,xmin,ymax,xmax] on a 0–1000 scale instead of xywh. The adapter converts it before validation.';
   if (model.coordinateConvention === 'xywh_pixels') prompt += '\nFor this explicitly configured model, express every bbox as [x,y,width,height] in the declared source image pixels instead of normalized coordinates. The adapter converts it before validation.';
   const schema = schemaFor(input.task), max = settings.maxOutputTokens ?? 8192;
   const images = input.images.map(i => ({ ...i, base64: i.base64 ?? toBase64(i.bytes) }));
-  // Gemini has not accepted Planogram Check's response schema once in a dozen live requests since
-  // failures were logged: each came back 503 UNAVAILABLE after 5–29 s, which left a row of a
-  // 7×30 audit too little of its 60 s to answer. The schema is still in the prompt text, and
-  // validateOutput enforces it on every answer, so this request no longer asks for it natively.
+  // Planogram Check's native schema is not sent to Gemini. It was first blamed for the 503s, and
+  // wrongly: requests without it got 503 too, which is overload. It stays off because it was
+  // never once seen to succeed, the schema is still in the prompt text, and validateOutput
+  // enforces the contract on every answer either way.
   const structured = sendsSchema(connection, model, input);
+  const thinking = settings.thinking === false ? null : geminiThinking(model.remoteModelId);
   if (connection.provider === 'gemini') {
     const parts = [{ text: prompt }, ...images.flatMap(i => [{ text: `Audit image ID: ${i.imageId}` }, { inlineData: { mimeType: i.mimeType, data: i.base64 } }])];
-    return { suffix: `/models/${encodeURIComponent(model.remoteModelId.replace(/^models\//, ''))}:generateContent`, body: { contents: [{ role: 'user', parts }], generationConfig: { maxOutputTokens: max, responseMimeType: 'application/json', ...(structured ? { responseJsonSchema: schema } : {}) } } };
+    return { suffix: `/models/${encodeURIComponent(model.remoteModelId.replace(/^models\//, ''))}:generateContent`, body: { contents: [{ role: 'user', parts }], generationConfig: { maxOutputTokens: max, responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}), ...(structured ? { responseJsonSchema: schema } : {}) } } };
   }
   if (connection.provider === 'anthropic') return { suffix: '/messages', body: { model: model.remoteModelId, max_tokens: max, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, ...images.flatMap(i => [{ type: 'text', text: `Audit image ID: ${i.imageId}` }, { type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.base64 } }])] }], ...(structured ? { output_config: { format: { type: 'json_schema', schema } } } : {}) } };
   if (connection.protocol === 'chat_completions') return { suffix: '/chat/completions', body: { model: model.remoteModelId, max_tokens: max, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mimeType};base64,${i.base64}` } }))] }], ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'retail_observations', strict: true, schema } } } : {}) } };
@@ -146,37 +165,39 @@ export function parseProviderResponse(provider, protocol, data) {
   return { raw, usage, resolvedModelId, responseId: data.id ?? data.responseId ?? null };
 }
 /**
- * Gemini answered every Planogram Check request carrying its response schema with a 5xx within a
- * second or four, on two models, while the same request without the schema succeeded and Price
- * Validation's smaller schema was accepted. A schema is how the provider is asked to keep to the
- * shape; `validateOutput` is what guarantees it, and it runs either way. So a structured request
- * the provider fails on is sent once more without the schema, and the run records that it was.
+ * Two things a request can ask for that a provider may refuse, each asked once more without it.
+ *
+ * A structured request Gemini fails with a 5xx is resent without the native schema, and a
+ * request carrying a thinking limit that Gemini rejects with a 400 is resent without the limit.
+ * validateOutput checks the answer either way. Only what was actually sent can have been
+ * refused: the schema fallback once fired on requests that carried no schema, resent them
+ * unchanged and logged a "schema rejection" — which is how overload was misread as a schema
+ * problem. The attempt records what was dropped and what the provider said.
  */
-// Only a schema that was actually sent can have been rejected. Without this check a Planogram
-// Check 503 — sent with no schema — was resent unchanged and logged as a schema rejection, which
-// is how overload was misread as a schema problem.
 const schemaRejected = (connection, model, input, e) => connection.provider === 'gemini' && sendsSchema(connection, model, input) && e?.code === 'AI_MODEL_UNAVAILABLE' && e.httpStatus >= 500;
+const thinkingRejected = (connection, model, settings, e) => connection.provider === 'gemini' && settings.thinking !== false && geminiThinking(model.remoteModelId) && e?.httpStatus === 400;
 export async function runProvider(connection, credential, model, input, settings, options = {}) {
   const started = Date.now();
-  let response, schema = null;
-  try {
-    const request = buildProviderRequest(connection, model, input, settings);
-    response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: settings.timeoutMs, ...options });
-  } catch (e) {
-    if (!schemaRejected(connection, model, input, e)) throw e;
-    schema = { enforced: false, rejectedWith: { httpStatus: e.httpStatus, providerStatus: e.providerStatus ?? null } };
-    const request = buildProviderRequest(connection, { ...model, structuredOutput: false }, input, settings);
-    const remaining = Math.max(1000, (settings.timeoutMs ?? 60000) - (Date.now() - started));
-    try { response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: remaining, ...options }); }
-    catch (retry) { throw Object.assign(retry, { schema, durationMs: Date.now() - started }); }
+  let response, schema = null, thinking = null, current = model, currentSettings = settings;
+  for (;;) {
+    try {
+      const request = buildProviderRequest(connection, current, input, currentSettings);
+      response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: Math.max(1000, (settings.timeoutMs ?? 60000) - (Date.now() - started)), ...options });
+      break;
+    } catch (e) {
+      const said = { httpStatus: e.httpStatus ?? null, providerStatus: e.providerStatus ?? null };
+      if (!schema && schemaRejected(connection, current, input, e)) { schema = { enforced: false, rejectedWith: said }; current = { ...current, structuredOutput: false }; continue; }
+      if (!thinking && thinkingRejected(connection, current, currentSettings, e)) { thinking = { limited: false, rejectedWith: said }; currentSettings = { ...currentSettings, thinking: false }; continue; }
+      throw Object.assign(e, { schema, thinking, durationMs: Date.now() - started });
+    }
   }
   const durationMs = Date.now() - started;
   let parsed;
   try { parsed = parseProviderResponse(connection.provider, connection.protocol, response.data); }
-  catch (e) { Object.assign(e, { durationMs, requestId: response.requestId, schema }); throw e; }
-  // `requestMs` is the answering request alone, without a rejected first try — what a speed is measured from.
-  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized', { otherParts: input.part ? new Set(input.part.otherKeys) : null }), requestId: response.requestId, durationMs, requestMs: response.durationMs, schema, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
-  catch (e) { Object.assign(e, parsed, { durationMs, requestId: response.requestId, schema }); throw e; }
+  catch (e) { Object.assign(e, { durationMs, requestId: response.requestId, schema, thinking }); throw e; }
+  // `requestMs` is the answering request alone, without a refused first try — what a speed is measured from.
+  try { return { ...parsed, result: validateOutput(parsed.raw, input, model.coordinateConvention ?? 'xywh_normalized', { otherParts: input.part ? new Set(input.part.otherKeys) : null }), requestId: response.requestId, durationMs, requestMs: response.durationMs, schema, thinking, estimatedCost: estimateCost(parsed.usage, model.pricing) }; }
+  catch (e) { Object.assign(e, parsed, { durationMs, requestId: response.requestId, schema, thinking }); throw e; }
 }
 /**
  * The most positions one Planogram Check request is asked to describe.
@@ -254,7 +275,7 @@ export async function runRecognition(connection, credential, model, input, setti
     requestId: responses[0].requestId, durationMs: Date.now() - started, requestMs: Math.max(...responses.map(r => r.requestMs ?? r.durationMs)),
     schema: responses.find(r => r.schema)?.schema ?? null,
     estimatedCost: costs.every(Boolean) && new Set(costs.map(c => c.currency)).size === 1 ? { ...costs[0], amount: costs.reduce((n, c) => n + c.amount, 0) } : null,
-    parts: responses.map((r, i) => ({ index: i + 1, rows: parts[i].part.rows, requestMs: r.requestMs ?? r.durationMs, usage: r.usage, schema: r.schema ?? null })),
+    parts: responses.map((r, i) => ({ index: i + 1, rows: parts[i].part.rows, requestMs: r.requestMs ?? r.durationMs, usage: r.usage, schema: r.schema ?? null, thinking: r.thinking ?? null })),
   };
 }
 /** Explicit usage-field schedules only. Unmapped billing categories => cost unavailable. */

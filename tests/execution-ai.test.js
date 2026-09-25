@@ -382,3 +382,32 @@ test('a row that hits a 503 is retried on its own and the audit still completes'
   assert.equal(seenPart4.length, 2, 'only the failed row is sent again');
   assert.equal(merged.result.products.length, 210);
 });
+
+test('recognition asks Gemini for the lowest thinking level, and drops it if the model refuses', async () => {
+  const { geminiThinking } = await import('../server/execution/adapters.js');
+  // Live: 7,860 thinking tokens on one row of 30 positions, and the answer cut off at 8,192.
+  assert.deepEqual(geminiThinking('gemini-3.8-flash'), { thinkingLevel: 'low' });
+  assert.deepEqual(geminiThinking('models/gemini-3.6-flash'), { thinkingLevel: 'low' });
+  assert.deepEqual(geminiThinking('gemini-2.5-flash'), { thinkingBudget: 1024 });
+  assert.equal(geminiThinking('gemini-2.0-flash'), null);
+  assert.equal(geminiThinking('gemini-flash-latest'), null, 'an alias is left at its default');
+  assert.equal(geminiThinking('fixture-model'), null);
+
+  const flash = { ...model, remoteModelId: 'gemini-3.8-flash' };
+  assert.deepEqual(buildProviderRequest(conn('gemini'), flash, input, {}).body.generationConfig.thinkingConfig, { thinkingLevel: 'low' });
+  assert.equal(buildProviderRequest(conn('gemini'), model, input, {}).body.generationConfig.thinkingConfig, undefined);
+
+  const bodies = [];
+  const refuses = async (_url, options) => {
+    const body = JSON.parse(options.body); bodies.push(body);
+    return body.generationConfig.thinkingConfig ? Response.json({ error: { status: 'INVALID_ARGUMENT' } }, { status: 400 }) : Response.json(geminiResponse(output()));
+  };
+  const answered = await runProvider(conn('gemini'), 'fixture-key', flash, input, { timeoutMs: 1000 }, { fetchImpl: refuses });
+  assert.equal(bodies.length, 2); assert.equal(answered.result.products.length, 2);
+  assert.deepEqual(answered.thinking, { limited: false, rejectedWith: { httpStatus: 400, providerStatus: 'INVALID_ARGUMENT' } });
+
+  // A 400 on a request that carried no thinking limit is the request's own problem: not resent.
+  let calls = 0;
+  await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return new Response('{}', { status: 400 }); } }), { code: 'AI_IMAGE_UNSUPPORTED' });
+  assert.equal(calls, 1);
+});
