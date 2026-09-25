@@ -123,10 +123,12 @@ test('a pasted key alone configures a provider end to end, with no Worker secret
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     seen.push({ url: String(url), key: options?.headers?.['x-goog-api-key'] ?? null });
     if (String(url).includes(':generateContent')) {
-      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ schemaVersion: '1', task: TASK_TW, products: [
-        { detectionId: 'd1', imageId: 'probe-image', bbox: [0.1, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: 'PROBE-A', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' },
-        { detectionId: 'd2', imageId: 'probe-image', bbox: [0.5, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: 'PROBE-B', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' },
-      ], proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] }) }] }, finishReason: 'STOP' }] });
+      // Each module has its own schema, so the stub must answer the task it was actually asked.
+      const forSg = String(options?.body ?? '').includes(TASK_SG);
+      const payload = forSg
+        ? { schemaVersion: '1', task: TASK_SG, prices: ['PROBE-A', 'PROBE-B'].map((id, i) => ({ imageId: 'probe-image', bbox: [0.1 + i * 0.4, 0.1, 0.2, 0.2], skuCandidateId: id, rawText: '1.00', priceDecimal: '1.00', currency: 'SGD', packUnitCandidate: null, score: null })), qualityWarnings: [] }
+        : { schemaVersion: '1', task: TASK_TW, products: ['PROBE-A', 'PROBE-B'].map((id, i) => ({ detectionId: `d${i}`, imageId: 'probe-image', bbox: [0.1 + i * 0.4, 0.1, 0.2, 0.2], slotKeyCandidate: null, skuCandidateId: id, alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' })), proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] }, finishReason: 'STOP' }] });
     }
     return Response.json({ models: [{ name: 'models/gemini-vision-fixture', displayName: 'Vision fixture', supportedGenerationMethods: ['generateContent'], outputTokenLimit: 8192 }] });
   });
@@ -142,7 +144,10 @@ test('a pasted key alone configures a provider end to end, with no Worker secret
   // 2. Check the connection. Every step passes, and the provider is reached with the pasted key.
   const report = await call(`/ai/connections/${id}/verify`, { remoteModelId: 'gemini-vision-fixture' });
   assert.equal(report.status, 200);
-  assert.deepEqual(report.body.steps.map(s => s.state), ['passed', 'passed', 'passed'], JSON.stringify(report.body.steps));
+  // Four steps, because both modules are exercised: a check that only probed Taiwan could pass
+  // while Price Validation failed on its own schema — which is exactly what it caught here.
+  assert.deepEqual(report.body.steps.map(s => s.key), ['credential', 'listing', `vision:${TASK_TW}`, `vision:${TASK_SG}`]);
+  assert.deepEqual(report.body.steps.map(s => s.state), ['passed', 'passed', 'passed', 'passed'], JSON.stringify(report.body.steps));
   assert.ok(seen.every(r => r.key === PASTED), 'every provider call must carry the pasted key');
   assert.ok(seen.some(r => r.url.includes(':generateContent')), 'the check must actually send the probe image');
 

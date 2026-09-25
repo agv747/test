@@ -134,9 +134,9 @@ async function route(request, env) {
       const p = await bodyJson(request, 5000), record = await readRecord(env.DB, 'connection', connectionId);
       requireThat(record, 'NOT_FOUND', 'Connection not found.', 404);
       const connection = record.data;
-      const report = await verifyConnection(env, connection, typeof p.remoteModelId === 'string' && p.remoteModelId ? p.remoteModelId : null);
+      const report = await verifyConnection(env, actor, connection, typeof p.remoteModelId === 'string' && p.remoteModelId ? p.remoteModelId : null);
       const checkedAt = new Date().toISOString();
-      const vision = report.steps.find((s) => s.key === 'vision');
+      const vision = report.steps.find((s) => s.key.startsWith('vision'));
       connection.lastTest = { state: report.ok ? 'passed' : 'failed', checkedAt, note: (report.steps.find((s) => s.state === 'failed') ?? vision)?.detail ?? 'Checked.' };
       await writeRecord(env.DB, 'connection', connectionId, connection, record.revision, connection.allowedMarkets.join(','));
       await recordAudit(env, actor, 'connection.verify', connectionId);

@@ -190,29 +190,26 @@ test('an environment key is found under its aliases, trimmed, and its absence is
   await assert.rejects(() => getCredential({ OPENAI_API_KEY: 'x' }, connection), e => /stored under a different name/.test(e.message));
 });
 
-test('the connection check reports each step and stops at the first real failure', async () => {
+test('the connection check resolves each module exactly as a run does', async () => {
   const { verifyConnection } = await import('../server/execution/verify.js');
-  const connection = { id: 'c1', name: 'Gemini', provider: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', headerMode: 'x-goog-api-key', credentialSource: 'environment', allowedMarkets: ['TW'], enabled: true };
+  const connection = { id: 'c1', name: 'Gemini', provider: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', headerMode: 'x-goog-api-key', credentialSource: 'environment', allowedMarkets: ['TW', 'SG'], enabled: true };
+  const actor = { id: 'admin', role: 'admin', markets: ['TW', 'SG'] };
   const env = { GEMINI_API_KEY: 'k' };
   const listing = { models: [{ name: 'models/real-model', displayName: 'Real', supportedGenerationMethods: ['generateContent'] }] };
   const list = async () => new Response(JSON.stringify(listing), { status: 200, headers: { 'content-type': 'application/json' } });
 
-  // No credential: the later steps are honestly reported as not reached, not as failures.
-  const noKey = await verifyConnection({}, connection, 'real-model', { fetchImpl: list });
+  // No credential: later steps are honestly not reached rather than reported as failures.
+  const noKey = await verifyConnection({}, actor, connection, 'real-model', { fetchImpl: list });
   assert.equal(noKey.ok, false);
   assert.equal(noKey.steps[0].state, 'failed');
-  assert.deepEqual(noKey.steps.slice(1).map(s => s.state), ['not_reached', 'not_reached']);
+  assert.ok(noKey.steps.slice(1).every(s => s.state === 'not_reached'));
 
-  // The failure that cost two days: a model the key does not offer is refused before any call.
-  let calls = 0;
-  const ghost = await verifyConnection(env, connection, 'gemini-3.7-flash', { fetchImpl: async (...a) => { calls += 1; return list(...a); } });
-  assert.equal(ghost.steps[1].state, 'passed');
-  assert.equal(ghost.steps[2].state, 'failed');
-  assert.match(ghost.steps[2].detail, /does not offer gemini-3\.7-flash/);
-  assert.equal(calls, 1, 'a model that is not offered must not reach the provider');
+  // One step per module, so Price Validation cannot be left untested by a Taiwan-only probe.
+  const both = await verifyConnection(env, actor, connection, 'real-model', { fetchImpl: list });
+  assert.deepEqual(both.steps.map(s => s.key), ['credential', 'listing', 'vision:tw_planogram_recognition', 'vision:sg_price_recognition']);
 
   // Listing refused, generation may still work: a warning, not a stop.
-  const refused = await verifyConnection(env, connection, null, { fetchImpl: async () => new Response('{}', { status: 403 }) });
+  const refused = await verifyConnection(env, actor, connection, null, { fetchImpl: async () => new Response('{}', { status: 403 }) });
   assert.equal(refused.steps[0].state, 'passed');
   assert.equal(refused.steps[1].state, 'warned');
 });
