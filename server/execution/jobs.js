@@ -2,7 +2,7 @@ import { authorize, can, requireThat, DomainError } from '../../public/app/execu
 import { TASK_TW, TASK_SG, PROMPT_VERSION } from '../../public/app/execution/ai-contracts.js';
 import { cellBox } from '../../public/app/execution/demo.js';
 import { initDb, readRecord, writeRecord, readMedia, digest, toBase64 } from './storage.js';
-import { connectionDto, getCredential, readEnvSecret } from './credentials.js';
+import { connectionDto, ENV_KEYS, getCredential, readEnvSecret } from './credentials.js';
 import { runRecognition, validateConnection } from './adapters.js';
 import { PROBE_PNG } from './probe-image.js';
 
@@ -135,10 +135,11 @@ export async function processDueJobs(env) {
     if (p.attempts.at(-1)?.state === 'processing') p.attempts.at(-1).state = 'response_unknown';
     await persistRun(env.DB, row, p, 'failed');
   }
+  const seen = await keyHeartbeat(env);
   // Cron gives durable recovery; bounded rounds also execute a schema repair without waiting a minute.
   for (let round = 0; round < 3; round++) {
     const queued = (await env.DB.prepare('SELECT id,next_at,payload FROM rei_jobs WHERE status=\'queued\' AND next_at<=? ORDER BY created_at LIMIT 10').bind(Date.now()).all()).results;
-    const due = queued.filter(row => canRun(env, row)).slice(0, 2);
+    const due = queued.filter(row => canRun(env, row, seen)).slice(0, 2);
     if (!due.length) break;
     await Promise.allSettled(due.map(row => executeRun(env, row.id)));
   }
@@ -161,6 +162,25 @@ export async function processDueJobs(env) {
  */
 export const HANDOFF_MS = 90000;
 /**
+ * How recently a Worker holding a key must have run the queue for keyless Workers to keep
+ * leaving that key's jobs alone.
+ *
+ * The handoff window alone was not enough. Crons do not fire like clockwork: on the live account
+ * none ran for nine minutes, and when they resumed a keyless Worker won the race for a job that
+ * had long passed its window, while price-check — which held the key, and whose connection check
+ * passed minutes later — lost it. So each Worker that can read a key says so at every cron, and a
+ * keyless Worker takes that key's job only when no such Worker has been heard from for this long.
+ */
+export const KEY_FRESH_MS = 300000;
+async function keyHeartbeat(env, now = Date.now()) {
+  for (const provider of Object.keys(ENV_KEYS)) {
+    if (!readEnvSecret(env, provider)) continue;
+    await env.DB.prepare("INSERT INTO rei_records(kind,id,market,revision,payload) VALUES('key_heartbeat',?,'',1,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,revision=rei_records.revision+1").bind(provider, JSON.stringify({ at: now })).run();
+  }
+  const { results } = await env.DB.prepare("SELECT id,payload FROM rei_records WHERE kind='key_heartbeat'").all();
+  return Object.fromEntries(results.map(r => [r.id, JSON.parse(r.payload).at]));
+}
+/**
  * The "no key here" message is true of the Worker that says it and misleading about the rest.
  * A run only reaches a keyless Worker after waiting HANDOFF_MS for one that has the key, so by
  * then the fact worth reporting is that no Worker sharing this database could read it — and the
@@ -169,10 +189,12 @@ export const HANDOFF_MS = 90000;
 function handedOff(e, row, now) {
   if (e?.code !== 'AI_NOT_CONFIGURED' || now - row.next_at < HANDOFF_MS) return e;
   const waited = Math.round((now - row.next_at) / 1000);
-  return Object.assign(new Error(`No Worker that shares this database could read the provider key: this run waited ${waited} s for one and none took it. Several Workers are built from this repository and a Worker secret belongs to only one of them, so a secret can disappear from the one that serves the app. Paste the key on the AI connection screen instead — it is stored encrypted in the shared database, every Worker can read it, and deploys do not remove it.`), { code: 'AI_NOT_CONFIGURED', status: 503, retryable: false });
+  return Object.assign(new Error(`No Worker that shares this database could read the provider key: this run waited ${waited} s, and none that holds it has run the queue in the last ${KEY_FRESH_MS / 60000} minutes. Several Workers are built from this repository and a Worker secret belongs to only one of them, so a secret can disappear from the one that serves the app. Paste the key on the AI connection screen instead — it is stored encrypted in the shared database, every Worker can read it, and deploys do not remove it.`), { code: 'AI_NOT_CONFIGURED', status: 503, retryable: false });
 }
-function canRun(env, row, now = Date.now()) {
-  if (now - row.next_at >= HANDOFF_MS) return true;
+function canRun(env, row, seen = {}, now = Date.now()) {
   const connection = JSON.parse(row.payload).selection?.connection;
-  return connection?.credentialSource !== 'environment' || Boolean(readEnvSecret(env, connection.provider));
+  if (connection?.credentialSource !== 'environment' || readEnvSecret(env, connection.provider)) return true;
+  if (now - row.next_at < HANDOFF_MS) return false;
+  // A Worker that holds this key has run the queue recently, so it will take the job.
+  return now - (seen[connection.provider] ?? 0) >= KEY_FRESH_MS;
 }

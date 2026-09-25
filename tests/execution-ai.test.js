@@ -231,7 +231,7 @@ test('Browser process requests do not own provider calls; scheduled jobs execute
 test('a Worker that cannot read the key leaves the run to one that can', async t => {
   // The live account had three Workers built from this repository on one database and one queue;
   // only one held the key. The check passed on that one, and the run was claimed by another.
-  const { HANDOFF_MS } = await import('../server/execution/jobs.js');
+  const { HANDOFF_MS, KEY_FRESH_MS } = await import('../server/execution/jobs.js');
   const DB = sqliteD1(), actor = { id: 'admin', role: 'admin', markets: ['TW'] };
   const keyless = { DB }, keyed = { DB, GEMINI_API_KEY: 'fixture-key' };
   const selection = { model, connection: { ...conn('gemini'), credentialSource: 'environment' }, route: { timeoutMs: 1000, maxOutputTokens: 8192 }, task: TASK_TW, market: 'TW' };
@@ -254,7 +254,14 @@ test('a Worker that cannot read the key leaves the run to one that can', async t
 
     // A key that exists on no Worker still ends in its diagnosis rather than a run queued forever.
     const orphan = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'no-worker-has-it' });
-    await DB.prepare('UPDATE rei_jobs SET next_at=? WHERE id=?').bind(Date.now() - HANDOFF_MS, orphan.id).run();
+    await DB.prepare('UPDATE rei_jobs SET next_at=? WHERE id=?').bind(Date.now() - 10 * HANDOFF_MS, orphan.id).run();
+    // Live: crons stalled for nine minutes, then a keyless Worker won the race for a long-due
+    // job while price-check held the key. A Worker with the key ran the queue just now above,
+    // so however long the job has waited, it is left for that Worker.
+    await processDueJobs(keyless);
+    assert.equal((await readRun(keyed, actor, orphan.id)).state, 'queued', 'a keyed Worker was heard from recently');
+    // Once no Worker holding the key has been heard from for KEY_FRESH_MS, the job ends.
+    await DB.prepare("UPDATE rei_records SET payload=? WHERE kind='key_heartbeat' AND id='gemini'").bind(JSON.stringify({ at: Date.now() - KEY_FRESH_MS })).run();
     await processDueJobs(keyless);
     const orphaned = await readRun(keyed, actor, orphan.id);
     assert.equal(orphaned.error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 2);
