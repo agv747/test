@@ -104,7 +104,11 @@ export function buildProviderRequest(connection, model, input, settings = {}) {
   if (model.coordinateConvention === 'xywh_pixels') prompt += '\nFor this explicitly configured model, express every bbox as [x,y,width,height] in the declared source image pixels instead of normalized coordinates. The adapter converts it before validation.';
   const schema = schemaFor(input.task), max = settings.maxOutputTokens ?? 8192;
   const images = input.images.map(i => ({ ...i, base64: i.base64 ?? toBase64(i.bytes) }));
-  const structured = model.structuredOutput !== false;
+  // Gemini has not accepted Planogram Check's response schema once in a dozen live requests since
+  // failures were logged: each came back 503 UNAVAILABLE after 5–29 s, which left a row of a
+  // 7×30 audit too little of its 60 s to answer. The schema is still in the prompt text, and
+  // validateOutput enforces it on every answer, so this request no longer asks for it natively.
+  const structured = model.structuredOutput !== false && !(connection.provider === 'gemini' && input.task === TASK_TW);
   if (connection.provider === 'gemini') {
     const parts = [{ text: prompt }, ...images.flatMap(i => [{ text: `Audit image ID: ${i.imageId}` }, { inlineData: { mimeType: i.mimeType, data: i.base64 } }])];
     return { suffix: `/models/${encodeURIComponent(model.remoteModelId.replace(/^models\//, ''))}:generateContent`, body: { contents: [{ role: 'user', parts }], generationConfig: { maxOutputTokens: max, responseMimeType: 'application/json', ...(structured ? { responseJsonSchema: schema } : {}) } } };

@@ -31,7 +31,12 @@ test('AI-03/04: all four provider adapters send native image and structured-outp
   for (const provider of ['gemini', 'openai', 'anthropic', 'openai_compatible']) {
     const c = conn(provider), r = buildProviderRequest(c, model, input, { maxOutputTokens: 8192 });
     assert.ok(!JSON.stringify(r.body).includes('Bearer'));
-    if (provider === 'gemini') { assert.match(r.suffix, /fixture-model:generateContent$/); assert.equal(r.body.contents[0].parts[2].inlineData.mimeType, 'image/png'); assert.equal(r.body.generationConfig.responseJsonSchema.type, 'object'); }
+    if (provider === 'gemini') {
+      assert.match(r.suffix, /fixture-model:generateContent$/); assert.equal(r.body.contents[0].parts[2].inlineData.mimeType, 'image/png');
+      // Gemini answered every Planogram Check schema with 503; Price Validation's is accepted.
+      assert.equal(r.body.generationConfig.responseJsonSchema, undefined); assert.equal(r.body.generationConfig.responseMimeType, 'application/json');
+      assert.equal(buildProviderRequest(c, model, probeInput(TASK_SG), {}).body.generationConfig.responseJsonSchema.type, 'object');
+    }
     else if (provider === 'anthropic') { assert.equal(r.suffix, '/messages'); assert.equal(r.body.messages[0].content[2].source.media_type, 'image/png'); assert.equal(r.body.output_config.format.type, 'json_schema'); }
     else { assert.equal(r.suffix, '/responses'); assert.equal(r.body.input[0].content[2].type, 'input_image'); assert.equal(r.body.store, false); assert.equal(r.body.text.format.strict, true); }
   }
@@ -59,20 +64,22 @@ test('AI-09: errors are typed; only transient transport failures are retryable',
   assert.throws(() => parseProviderResponse('gemini', 'gemini', { promptFeedback: { blockReason: 'SAFETY' } }), e => e.code === 'AI_REFUSED' && !e.retryable);
 });
 test('a schema Gemini fails on is dropped once, and the output is still validated', async () => {
-  // Live: every Planogram Check request with its schema got a fast 5xx; without it, it passed.
+  // Planogram Check no longer sends one to Gemini; Price Validation does, so the fallback stays.
+  const input = probeInput(TASK_SG);
+  const priced = () => ({ schemaVersion: '1', task: TASK_SG, prices: ['A', 'B'].map((v, i) => ({ imageId: 'probe-image', bbox: [i ? .525 : .025, .23, .45, .71], skuCandidateId: `PROBE-${v}`, rawText: `PROBE-${v}`, priceDecimal: '1.00', currency: 'SGD', packUnitCandidate: null, score: null })), qualityWarnings: [] });
   const bodies = [];
   const fetchImpl = async (_url, options) => {
     const body = JSON.parse(options.body); bodies.push(body);
     if (body.generationConfig.responseJsonSchema) return Response.json({ error: { code: 500, status: 'INTERNAL', message: 'x' } }, { status: 500 });
-    return Response.json(geminiResponse(output()));
+    return Response.json(geminiResponse(priced()));
   };
   const response = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000, maxOutputTokens: 8192 }, { fetchImpl });
-  assert.equal(bodies.length, 2); assert.equal(response.result.products.length, 2);
+  assert.equal(bodies.length, 2); assert.equal(response.result.prices.length, 2);
   assert.deepEqual(response.schema, { enforced: false, rejectedWith: { httpStatus: 500, providerStatus: 'INTERNAL' } });
   assert.equal(bodies[1].generationConfig.responseMimeType, 'application/json', 'still asks for JSON');
 
   // Accepted schemas are untouched, and output that breaks the contract still fails.
-  const accepted = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => Response.json(geminiResponse(output())) });
+  const accepted = await runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: async () => Response.json(geminiResponse(priced())) });
   assert.equal(accepted.schema, null);
   const invalid = async (_url, options) => JSON.parse(options.body).generationConfig.responseJsonSchema ? new Response('{}', { status: 500 }) : Response.json(geminiResponse({ invalid: true }));
   await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, input, { timeoutMs: 1000 }, { fetchImpl: invalid }), e => e.code === 'AI_INVALID_OUTPUT' && e.schema.enforced === false);
