@@ -177,3 +177,15 @@ test('the analyze button names a missing deployment credential before a run is q
   // An actor whose /ai/state omits the connection must not be blocked by a guess.
   assert.match(analyzeBlocker('shared', route, capture, { models: [], connections: [] }), /require review/);
 });
+
+test('an environment key is found under its aliases, trimmed, and its absence is diagnosed', async () => {
+  const { getCredential, hasEnvironmentCredential } = await import('../server/execution/credentials.js');
+  const connection = { provider: 'gemini', credentialSource: 'environment', id: 'c1' };
+  assert.equal(await getCredential({ GEMINI_API_KEY: '  k1  ' }, connection), 'k1');
+  assert.equal(await getCredential({ GOOGLE_API_KEY: 'k2' }, connection), 'k2');
+  assert.equal(hasEnvironmentCredential({ GEMINI_API_KEY: '   ' }, 'gemini'), false);
+  // Nothing at all on the deployment: point at the Deploy button, not at the key's name.
+  await assert.rejects(() => getCredential({}, connection), e => /nothing has reached this Worker/.test(e.message) && e.code === 'AI_NOT_CONFIGURED');
+  // Secrets clearly do arrive, so this one is named wrong rather than missing.
+  await assert.rejects(() => getCredential({ OPENAI_API_KEY: 'x' }, connection), e => /stored under a different name/.test(e.message));
+});

@@ -33,6 +33,7 @@ import { RECOGNITION_MODELS } from './public/app/config.js';
 import { handleExecution } from './server/execution/api.js';
 import { getActor, sameOrigin } from './server/execution/auth.js';
 import { processDueJobs } from './server/execution/jobs.js';
+import { hasEnvironmentCredential } from './server/execution/credentials.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -353,16 +354,17 @@ function describeBindings(env) {
     ai_gateway_id: env.AI_GATEWAY_ID || 'default',
     seed_token_configured: Boolean(env.SEED_TOKEN),
     // Presence only. No value is ever returned by any endpoint.
-    openai_key_configured: Boolean(env.OPENAI_API_KEY),
-    gemini_key_configured: Boolean(env.GEMINI_API_KEY),
+    // Alias-aware, so this endpoint and a real run can never disagree about the same key.
+    openai_key_configured: hasEnvironmentCredential(env, 'openai'),
+    gemini_key_configured: hasEnvironmentCredential(env, 'gemini'),
     /**
      * The same facts keyed by secret name, so Admin can ask "is the secret this model needs
      * present" instead of carrying a branch per provider — which is how the OpenAI-only check
      * came to report a missing key against every bring-your-own-key model.
      */
     secrets: {
-      OPENAI_API_KEY: Boolean(env.OPENAI_API_KEY),
-      GEMINI_API_KEY: Boolean(env.GEMINI_API_KEY),
+      OPENAI_API_KEY: hasEnvironmentCredential(env, 'openai'),
+      GEMINI_API_KEY: hasEnvironmentCredential(env, 'gemini'),
     },
     models: RECOGNITION_MODELS.filter((m) => m.reads_image).map((m) => ({
       id: m.id,
