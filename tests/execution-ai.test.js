@@ -256,7 +256,11 @@ test('a Worker that cannot read the key leaves the run to one that can', async t
     const orphan = await enqueueRun(keyed, actor, input, selection, { idempotencyKey: 'no-worker-has-it' });
     await DB.prepare('UPDATE rei_jobs SET next_at=? WHERE id=?').bind(Date.now() - HANDOFF_MS, orphan.id).run();
     await processDueJobs(keyless);
-    assert.equal((await readRun(keyed, actor, orphan.id)).error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 2);
+    const orphaned = await readRun(keyed, actor, orphan.id);
+    assert.equal(orphaned.error.code, 'AI_NOT_CONFIGURED'); assert.equal(calls, 2);
+    // Not "press Deploy on this Worker": no Worker had it, and the lasting fix is the stored key.
+    assert.match(orphaned.error.message, /No Worker that shares this database could read the provider key/);
+    assert.match(orphaned.error.message, /Paste the key on the AI connection screen/);
   } finally { DB.close(); }
 });
 
