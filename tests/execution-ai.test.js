@@ -355,3 +355,30 @@ test('a 7×30 cabinet is recognised as seven row requests and merged back into o
   await assert.rejects(() => runRecognition({ ...conn('gemini') }, 'fixture-key', { ...model, structuredOutput: false }, cabinet, { timeoutMs: 1000 }, { fetchImpl: oneFails }),
     e => e.code === 'AI_MODEL_UNAVAILABLE' && e.part.of === 7 && e.part.succeeded === 6);
 });
+
+test('a Planogram Check 503 is overload: sent once, not logged as a schema rejection', async () => {
+  // Live: the retry "without the schema" resent the same schema-less request and recorded a
+  // schema rejection, which is how overload was misread as a schema problem.
+  let calls = 0;
+  await assert.rejects(() => runProvider(conn('gemini'), 'fixture-key', model, probeInput(TASK_TW), { timeoutMs: 1000 }, { fetchImpl: async () => { calls++; return Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 }); } }),
+    e => e.code === 'AI_MODEL_UNAVAILABLE' && e.providerStatus === 'UNAVAILABLE' && !e.schema);
+  assert.equal(calls, 1);
+});
+
+test('a row that hits a 503 is retried on its own and the audit still completes', async () => {
+  const { runRecognition } = await import('../server/execution/adapters.js');
+  const geometry = [];
+  for (let row = 1; row <= 7; row++) for (let column = 1; column <= 30; column++) geometry.push({ key: `R${row}C${column}`, row, column, views: [{ imageId: 'probe-image', bbox: [(column - 1) / 30, (row - 1) / 7, 1 / 30, 1 / 7], primary: true }] });
+  const cabinet = { ...probeInput(TASK_TW), catalogue: [{ id: 'S1', code: 'S1', name: 'Fixture SKU' }], geometry };
+  const everything = { schemaVersion: '1', task: TASK_TW, products: geometry.map(g => ({ detectionId: `d-${g.key}`, imageId: 'probe-image', bbox: g.views[0].bbox, slotKeyCandidate: g.key, skuCandidateId: 'S1', alternativeSkuIds: [], readableText: null, score: null, scoreType: 'none' })), proposedEmptySlots: [], uncertainRegions: [], qualityWarnings: [] };
+  const seenPart4 = [];
+  const fetchImpl = async (_url, options) => {
+    const isPart4 = options.body.includes('part 4 of 7');
+    if (isPart4) seenPart4.push(1);
+    if (isPart4 && seenPart4.length === 1) return Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503, headers: { 'retry-after': '0' } });
+    return Response.json(geminiResponse(everything));
+  };
+  const merged = await runRecognition(conn('gemini'), 'fixture-key', model, cabinet, { timeoutMs: 60000 }, { fetchImpl });
+  assert.equal(seenPart4.length, 2, 'only the failed row is sent again');
+  assert.equal(merged.result.products.length, 210);
+});

@@ -98,6 +98,7 @@ export async function listProviderModels(connection, credential, cursor = null, 
   requireThat(Array.isArray(list), 'AI_INVALID_OUTPUT', 'The provider did not return a model list. Add an exact model ID manually.');
   return { models: list.map(m => ({ remoteModelId: (m.name ?? m.id).replace(/^models\//, ''), displayName: m.displayName ?? m.display_name ?? m.id ?? m.name, providerMetadata: { inputTokenLimit: m.inputTokenLimit ?? null, outputTokenLimit: m.outputTokenLimit ?? null, supportedGenerationMethods: m.supportedGenerationMethods ?? null } })), nextCursor: data.nextPageToken ?? (data.has_more ? data.last_id ?? list.at(-1)?.id : null) };
 }
+const sendsSchema = (connection, model, input) => model.structuredOutput !== false && !(connection.provider === 'gemini' && input.task === TASK_TW);
 export function buildProviderRequest(connection, model, input, settings = {}) {
   let prompt = recognitionPrompt(input, settings.repair);
   if (model.coordinateConvention === 'yxyx_1000') prompt += '\nFor this explicitly configured model, express every bbox as [ymin,xmin,ymax,xmax] on a 0–1000 scale instead of xywh. The adapter converts it before validation.';
@@ -108,7 +109,7 @@ export function buildProviderRequest(connection, model, input, settings = {}) {
   // failures were logged: each came back 503 UNAVAILABLE after 5–29 s, which left a row of a
   // 7×30 audit too little of its 60 s to answer. The schema is still in the prompt text, and
   // validateOutput enforces it on every answer, so this request no longer asks for it natively.
-  const structured = model.structuredOutput !== false && !(connection.provider === 'gemini' && input.task === TASK_TW);
+  const structured = sendsSchema(connection, model, input);
   if (connection.provider === 'gemini') {
     const parts = [{ text: prompt }, ...images.flatMap(i => [{ text: `Audit image ID: ${i.imageId}` }, { inlineData: { mimeType: i.mimeType, data: i.base64 } }])];
     return { suffix: `/models/${encodeURIComponent(model.remoteModelId.replace(/^models\//, ''))}:generateContent`, body: { contents: [{ role: 'user', parts }], generationConfig: { maxOutputTokens: max, responseMimeType: 'application/json', ...(structured ? { responseJsonSchema: schema } : {}) } } };
@@ -151,7 +152,10 @@ export function parseProviderResponse(provider, protocol, data) {
  * shape; `validateOutput` is what guarantees it, and it runs either way. So a structured request
  * the provider fails on is sent once more without the schema, and the run records that it was.
  */
-const schemaRejected = (connection, model, e) => connection.provider === 'gemini' && model.structuredOutput !== false && e?.code === 'AI_MODEL_UNAVAILABLE' && e.httpStatus >= 500;
+// Only a schema that was actually sent can have been rejected. Without this check a Planogram
+// Check 503 — sent with no schema — was resent unchanged and logged as a schema rejection, which
+// is how overload was misread as a schema problem.
+const schemaRejected = (connection, model, input, e) => connection.provider === 'gemini' && sendsSchema(connection, model, input) && e?.code === 'AI_MODEL_UNAVAILABLE' && e.httpStatus >= 500;
 export async function runProvider(connection, credential, model, input, settings, options = {}) {
   const started = Date.now();
   let response, schema = null;
@@ -159,7 +163,7 @@ export async function runProvider(connection, credential, model, input, settings
     const request = buildProviderRequest(connection, model, input, settings);
     response = await providerFetch(connection, credential, request.suffix, { body: request.body, timeoutMs: settings.timeoutMs, ...options });
   } catch (e) {
-    if (!schemaRejected(connection, model, e)) throw e;
+    if (!schemaRejected(connection, model, input, e)) throw e;
     schema = { enforced: false, rejectedWith: { httpStatus: e.httpStatus, providerStatus: e.providerStatus ?? null } };
     const request = buildProviderRequest(connection, { ...model, structuredOutput: false }, input, settings);
     const remaining = Math.max(1000, (settings.timeoutMs ?? 60000) - (Date.now() - started));
@@ -199,6 +203,21 @@ export function splitInput(input) {
     return { ...input, geometry: geometry.filter(g => mine.has(g.row)), part: { index: i + 1, of: parts.length, rows: [own[0], own.at(-1)], otherKeys: geometry.filter(g => !mine.has(g.row)).map(g => g.key) } };
   });
 }
+/**
+ * One part, retried on its own while time remains. Seven rows sent at once to an overloaded
+ * model came back as a few answers and several 503s; retrying the whole run threw the answers
+ * away and sent all seven again, into the same overload.
+ */
+export const PART_ATTEMPTS = 3;
+async function runPart(connection, credential, model, part, settings, options, deadline) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await runProvider(connection, credential, model, part, { ...settings, timeoutMs: Math.max(1000, deadline - Date.now()) }, options); }
+    catch (e) {
+      if (!e.retryable || attempt >= PART_ATTEMPTS || deadline - Date.now() < 15000) throw Object.assign(e, { partAttempts: attempt });
+      await new Promise(resolve => setTimeout(resolve, Math.min(e.retryAfterMs ?? 2000, 5000) + Math.random() * 1000));
+    }
+  }
+}
 const sumUsage = list => list.reduce((total, usage) => {
   for (const [k, v] of Object.entries(usage ?? {})) if (Number.isFinite(v)) total[k] = (total[k] ?? 0) + v;
   return total;
@@ -210,8 +229,8 @@ const sumUsage = list => list.reduce((total, usage) => {
 export async function runRecognition(connection, credential, model, input, settings, options = {}) {
   const parts = splitInput(input);
   if (parts.length === 1) return runProvider(connection, credential, model, input, settings, options);
-  const started = Date.now();
-  const settled = await Promise.allSettled(parts.map(part => runProvider(connection, credential, model, part, settings, options)));
+  const started = Date.now(), deadline = started + (settings.timeoutMs ?? 60000);
+  const settled = await Promise.allSettled(parts.map(part => runPart(connection, credential, model, part, settings, options, deadline)));
   const failed = settled.findIndex(s => s.status === 'rejected');
   if (failed >= 0) {
     const e = settled[failed].reason;

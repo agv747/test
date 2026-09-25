@@ -11,7 +11,15 @@
       "WebFetch",
       "WebSearch",
       "mcp__github",
-      "mcp__Cloudflare_Developer_Platform"
+      "mcp__github__*",
+      "mcp__Cloudflare_Developer_Platform",
+      "mcp__Cloudflare_Developer_Platform__*",
+      "mcp__Cloudflare_Developer_Platform__d1_database_query",
+      "mcp__Cloudflare_Developer_Platform__d1_database_get",
+      "mcp__Cloudflare_Developer_Platform__d1_databases_list",
+      "mcp__Cloudflare_Developer_Platform__workers_list",
+      "mcp__Cloudflare_Developer_Platform__workers_get_worker",
+      "mcp__Cloudflare_Developer_Platform__workers_get_worker_code"
     ],
     "deny": [
       "mcp__Cloudflare_Developer_Platform__d1_database_delete",
